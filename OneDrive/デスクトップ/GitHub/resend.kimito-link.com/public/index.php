@@ -259,7 +259,7 @@ route('GET', '/groups/edit', function() use ($storage) {
   $id=(int)($_GET['id']??0);
   $g=$storage->getGroup($u['id'],$id);
   if(!$g){ header('Location: /groups'); exit; }
-  render_view('groups/edit', ['user'=>$u, 'g'=>$g, 'page'=>'groups']);
+  render_view('groups/edit', ['user'=>$u, 'g'=>$g, 'warn'=>[], 'page'=>'groups']);
 });
 route('POST', '/groups/save', function() use ($storage) {
   // CSRF検証（csrf_verify内でエラー表示される）
@@ -295,7 +295,7 @@ route('POST', '/groups/save', function() use ($storage) {
     } else {
       $g = ['name'=>$name, 'to'=>$to, 'cc'=>$cc, 'bcc'=>$bcc];
     }
-    render_view('groups/edit', ['user'=>$u, 'g'=>$g, 'errors'=>$errors, 'page'=>'groups']);
+    render_view('groups/edit', ['user'=>$u, 'g'=>$g, 'errors'=>$errors, 'warn'=>$warn, 'page'=>'groups']);
     return;
   }
   
