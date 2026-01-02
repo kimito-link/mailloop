@@ -3,6 +3,9 @@ declare(strict_types=1);
 require_once __DIR__ . '/../app/bootstrap.php';
 require_once __DIR__ . '/../views/helpers/emails.php';
 
+// エラーハンドリング: 最上流で例外をキャッチ
+try {
+
 function render_view(string $viewName, array $vars = []) {
   extract($vars);
   $view = $viewName;
@@ -32,6 +35,59 @@ function validateTemplate(array $t): array {
     $errors[] = '本文は20,000文字以内です';
   }
   return $errors;
+}
+
+function validateGroup(array $g): array {
+  $errors = [];
+  $name = trim($g['name'] ?? '');
+  if (empty($name)) {
+    $errors[] = 'グループ名は必須です';
+  } elseif (mb_strlen($name) > 100) {
+    $errors[] = 'グループ名は100文字以内です';
+  }
+  // dedupe後の件数で判定（重複除去後の実質件数）
+  $to = $g['to'] ?? [];
+  $cc = $g['cc'] ?? [];
+  $bcc = $g['bcc'] ?? [];
+  $total = count($to) + count($cc) + count($bcc);
+  if ($total === 0) {
+    $errors[] = 'To/CC/BCCのいずれかに最低1件のメールアドレスが必要です';
+  }
+  if ($total > 100) {
+    $errors[] = 'To/CC/BCCの合計は100件以内です（現在: ' . $total . '件）';
+  }
+  return $errors;
+}
+
+function render_error(string $message, ?string $detail = null): void {
+  http_response_code(500);
+  render_view('error', ['message' => $message, 'detail' => $detail]);
+  exit;
+}
+
+function csrf_token(): string {
+  if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+  }
+  return $_SESSION['csrf_token'];
+}
+
+function csrf_verify(): bool {
+  $token = $_POST['csrf_token'] ?? '';
+  $sessionToken = $_SESSION['csrf_token'] ?? '';
+  if (empty($sessionToken) || empty($token)) {
+    error_log('MailLoop CSRF: Missing token');
+    http_response_code(403);
+    render_error('不正なリクエストです。CSRFトークンが無効です。');
+    return false;
+  }
+  if (!hash_equals($sessionToken, $token)) {
+    error_log('MailLoop CSRF: Token mismatch');
+    http_response_code(403);
+    render_error('不正なリクエストです。CSRFトークンが一致しません。');
+    return false;
+  }
+  return true;
 }
 
 // Routes
@@ -64,6 +120,10 @@ route('GET', '/auth/callback', function() use ($config, $storage) {
     'avatar' => $uData['picture'] ?? '',
   ];
   $storage->upsertUser($user);
+
+  // ログイン成功時: セッションID再生成 + CSRFトークン再生成
+  session_regenerate_id(true);
+  $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); // 即座に再生成
 
   $token = [
     'access_token_enc' => encrypt_str($access, $config['APP_KEY']),
@@ -116,6 +176,10 @@ route('GET', '/templates/edit', function() use ($storage) {
   render_view('templates/edit', ['user'=>$u, 't'=>$t, 'page'=>'templates']);
 });
 route('POST', '/templates/save', function() use ($storage) {
+  // CSRF検証（csrf_verify内でエラー表示される）
+  if (!csrf_verify()) {
+    return;
+  }
   // 一時的にダミーユーザーで動作確認（OAuth実装前）
   $u = $storage->getUser();
   if (!$u) {
@@ -153,6 +217,10 @@ route('POST', '/templates/save', function() use ($storage) {
   header('Location: /templates'); exit;
 });
 route('POST', '/templates/delete', function() use ($storage) {
+  // CSRF検証（csrf_verify内でエラー表示される）
+  if (!csrf_verify()) {
+    return;
+  }
   $u = require_login($storage);
   $id = (int)($_POST['id'] ?? 0);
   if ($id>0) $storage->deleteTemplate($u['id'], $id);
@@ -160,38 +228,99 @@ route('POST', '/templates/delete', function() use ($storage) {
 });
 
 // Groups
+// TODO: OAuth実装後は require_login に戻す
 route('GET', '/groups', function() use ($storage) {
-  $u = require_login($storage);
+  // 一時的にダミーユーザーで動作確認（OAuth実装前）
+  $u = $storage->getUser();
+  if (!$u) {
+    $u = ['id' => 1, 'email' => 'test@example.com', 'name' => 'Test User'];
+    $storage->upsertUser($u);
+  }
   $q = $_GET['q'] ?? '';
   $groups = $storage->listGroups($u['id'], $q);
   render_view('groups/index', ['user'=>$u, 'groups'=>$groups, 'q'=>$q, 'page'=>'groups']);
 });
 route('GET', '/groups/new', function() use ($storage) {
-  $u = require_login($storage);
-  render_view('groups/edit', ['user'=>$u, 'g'=>null, 'page'=>'groups']);
+  // 一時的にダミーユーザーで動作確認（OAuth実装前）
+  $u = $storage->getUser();
+  if (!$u) {
+    $u = ['id' => 1, 'email' => 'test@example.com', 'name' => 'Test User'];
+    $storage->upsertUser($u);
+  }
+  render_view('groups/edit', ['user'=>$u, 'g'=>null, 'warn'=>[], 'page'=>'groups']);
 });
 route('GET', '/groups/edit', function() use ($storage) {
-  $u = require_login($storage);
+  // 一時的にダミーユーザーで動作確認（OAuth実装前）
+  $u = $storage->getUser();
+  if (!$u) {
+    $u = ['id' => 1, 'email' => 'test@example.com', 'name' => 'Test User'];
+    $storage->upsertUser($u);
+  }
   $id=(int)($_GET['id']??0);
   $g=$storage->getGroup($u['id'],$id);
   if(!$g){ header('Location: /groups'); exit; }
   render_view('groups/edit', ['user'=>$u, 'g'=>$g, 'page'=>'groups']);
 });
 route('POST', '/groups/save', function() use ($storage) {
-  $u = require_login($storage);
+  // CSRF検証（csrf_verify内でエラー表示される）
+  if (!csrf_verify()) {
+    return;
+  }
+  // 一時的にダミーユーザーで動作確認（OAuth実装前）
+  $u = $storage->getUser();
+  if (!$u) {
+    $u = ['id' => 1, 'email' => 'test@example.com', 'name' => 'Test User'];
+    $storage->upsertUser($u);
+  }
   $id=(int)($_POST['id']??0);
   $name=trim($_POST['name']??'');
   $to=parse_email_list($_POST['to_list']??'');
   $cc=parse_email_list($_POST['cc_list']??'');
   $bcc=parse_email_list($_POST['bcc_list']??'');
+  // 重複除去（dedupe）を先に実行
   [$to,$cc,$bcc,$warn] = dedupe_priority($to,$cc,$bcc);
-  $grp=['name'=>$name?:'Untitled','to'=>$to,'cc'=>$cc,'bcc'=>$bcc,'warn'=>$warn];
+  
+  // バリデーション（dedupe後の件数で判定）
+  $grp = ['name'=>$name, 'to'=>$to, 'cc'=>$cc, 'bcc'=>$bcc];
+  $errors = validateGroup($grp);
+  
+  if (!empty($errors)) {
+    // エラー時は編集画面を再表示
+    $g = $id > 0 ? $storage->getGroup($u['id'], $id) : null;
+    if ($g) {
+      $g['name'] = $name;
+      $g['to'] = $to;
+      $g['cc'] = $cc;
+      $g['bcc'] = $bcc;
+    } else {
+      $g = ['name'=>$name, 'to'=>$to, 'cc'=>$cc, 'bcc'=>$bcc];
+    }
+    render_view('groups/edit', ['user'=>$u, 'g'=>$g, 'errors'=>$errors, 'page'=>'groups']);
+    return;
+  }
+  
+  // JSON形式に変換（[{"email":"...","name":"..."}]形式）
+  $toJson = array_map(fn($e) => ['email' => $e, 'name' => ''], $to);
+  $ccJson = array_map(fn($e) => ['email' => $e, 'name' => ''], $cc);
+  $bccJson = array_map(fn($e) => ['email' => $e, 'name' => ''], $bcc);
+  
+  // バリデーション通過後、保存（グループ名もトリム済み）
+  $grp = ['name'=>$name, 'to'=>$toJson, 'cc'=>$ccJson, 'bcc'=>$bccJson];
   if($id>0) $storage->updateGroup($u['id'],$id,$grp);
   else $storage->createGroup($u['id'],$grp);
   header('Location: /groups'); exit;
 });
 route('POST', '/groups/delete', function() use ($storage) {
-  $u=require_login($storage);
+  // CSRF検証（csrf_verify内でエラー表示される）
+  if (!csrf_verify()) {
+    return;
+  }
+  // 一時的にダミーユーザーで動作確認（OAuth実装前）
+  $u = $storage->getUser();
+  if (!$u) {
+    $u = ['id' => 1, 'email' => 'test@example.com', 'name' => 'Test User'];
+    $storage->upsertUser($u);
+  }
   $id=(int)($_POST['id']??0);
   if($id>0) $storage->deleteGroup($u['id'],$id);
   header('Location: /groups'); exit;
@@ -302,4 +431,17 @@ route('GET','/logs/view', function() use ($storage){
   render_view('logs/view',['user'=>$u,'log'=>$log,'page'=>'logs']);
 });
 
-dispatch($_SERVER['REQUEST_METHOD'], $_SERVER['REQUEST_URI'], []);
+  dispatch($_SERVER['REQUEST_METHOD'], $_SERVER['REQUEST_URI'], []);
+} catch (RuntimeException $e) {
+  error_log('MailLoop Error: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
+  $detail = (defined('APP_DEBUG') && APP_DEBUG) ? $e->getMessage() : null;
+  render_error('システムエラーが発生しました。管理者にお問い合わせください。', $detail);
+} catch (Exception $e) {
+  error_log('MailLoop Unexpected Error: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
+  $detail = (defined('APP_DEBUG') && APP_DEBUG) ? $e->getMessage() : null;
+  render_error('予期しないエラーが発生しました。', $detail);
+} catch (Throwable $e) {
+  error_log('MailLoop Fatal Error: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
+  $detail = (defined('APP_DEBUG') && APP_DEBUG) ? $e->getMessage() : null;
+  render_error('予期しないエラーが発生しました。', $detail);
+}
