@@ -1,13 +1,15 @@
-# PHPの実行を明示的に許可（親ディレクトリのDeny設定を上書き）
-<IfModule mod_access_compat.c>
-    Order Allow,Deny
-    Allow from all
-</IfModule>
+# 1) PHPファイルだけは明示的に許可（親の <FilesMatch \.php$> Deny を打ち消す）
+<FilesMatch "\.php$">
+    <IfModule mod_access_compat.c>
+        Order Allow,Deny
+        Allow from all
+    </IfModule>
+    <IfModule mod_authz_core.c>
+        Require all granted
+    </IfModule>
+</FilesMatch>
 
-<IfModule mod_authz_core.c>
-    Require all granted
-</IfModule>
-
+# 2) ルーティング
 RewriteEngine On
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteRule ^ index.php [QSA,L]
