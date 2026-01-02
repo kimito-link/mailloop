@@ -1,17 +1,16 @@
 <?php
 declare(strict_types=1);
 
-function google_auth_url(array $config): string {
+function google_auth_url(array $config, string $state): string {
+  $scopes = trim(($config['GOOGLE_SCOPES'] ?? '') . ' ' . ($config['GMAIL_SCOPE'] ?? ''));
   $params = [
     'client_id' => $config['GOOGLE_CLIENT_ID'],
     'redirect_uri' => $config['GOOGLE_REDIRECT_URI'],
     'response_type' => 'code',
-    'scope' => implode(' ', [
-      $config['GMAIL_SCOPE'],
-      'openid', 'email', 'profile',
-    ]),
+    'scope' => $scopes,
     'access_type' => 'offline',
     'prompt' => 'consent',
+    'state' => $state,
   ];
   return 'https://accounts.google.com/o/oauth2/v2/auth?' . http_build_query($params);
 }

@@ -23,6 +23,7 @@ $config = [
   'GOOGLE_CLIENT_SECRET' => 'DUMMY_CLIENT_SECRET',
   'GOOGLE_REDIRECT_URI' => 'https://resend.kimito-link.com/auth/callback',
 
+  'GOOGLE_SCOPES' => 'openid email profile',
   'GMAIL_SCOPE' => 'https://www.googleapis.com/auth/gmail.send',
 
   'WARN_BCC_1' => 50,
@@ -33,6 +34,11 @@ $config = [
 // mysql利用時にDB_PASS未設定ならエラーで停止
 if ($config['STORAGE_DRIVER'] === 'mysql' && empty($config['DB_PASS'])) {
   throw new RuntimeException('DB_PASS is not set. Please configure it in config/secrets.php or environment variable.');
+}
+
+// デバッグモード（開発時のみ true、本番は false）
+if (!defined('APP_DEBUG')) {
+  define('APP_DEBUG', false);
 }
 
 return $config;
