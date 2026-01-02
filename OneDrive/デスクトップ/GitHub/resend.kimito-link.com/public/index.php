@@ -14,6 +14,26 @@ function require_login($storage) {
   return $u;
 }
 
+function validateTemplate(array $t): array {
+  $errors = [];
+  if (empty(trim($t['title'] ?? ''))) {
+    $errors[] = 'タイトルは必須です';
+  } elseif (mb_strlen($t['title']) > 100) {
+    $errors[] = 'タイトルは100文字以内です';
+  }
+  if (empty(trim($t['subject'] ?? ''))) {
+    $errors[] = '件名は必須です';
+  } elseif (mb_strlen($t['subject']) > 150) {
+    $errors[] = '件名は150文字以内です';
+  }
+  if (empty(trim($t['body_text'] ?? ''))) {
+    $errors[] = '本文は必須です';
+  } elseif (mb_strlen($t['body_text']) > 20000) {
+    $errors[] = '本文は20,000文字以内です';
+  }
+  return $errors;
+}
+
 // Routes
 route('GET', '/', function() {
   render_view('home', ['page' => 'home']);
@@ -107,7 +127,27 @@ route('POST', '/templates/save', function() use ($storage) {
   $subject = trim($_POST['subject'] ?? '');
   $body = trim($_POST['body_text'] ?? '');
   $att = trim($_POST['attachment_url'] ?? '');
-  $tpl = ['title'=>$title ?: 'Untitled', 'subject'=>$subject, 'body_text'=>$body, 'attachments'=> $att ? [['type'=>'link','url'=>$att]] : []];
+  
+  // バリデーション
+  $tpl = ['title'=>$title, 'subject'=>$subject, 'body_text'=>$body];
+  $errors = validateTemplate($tpl);
+  
+  if (!empty($errors)) {
+    // エラー時は編集画面を再表示
+    $t = $id > 0 ? $storage->getTemplate($u['id'], $id) : null;
+    if ($t) {
+      $t['title'] = $title;
+      $t['subject'] = $subject;
+      $t['body_text'] = $body;
+    } else {
+      $t = ['title'=>$title, 'subject'=>$subject, 'body_text'=>$body];
+    }
+    render_view('templates/edit', ['user'=>$u, 't'=>$t, 'errors'=>$errors, 'page'=>'templates']);
+    return;
+  }
+  
+  // バリデーション通過後、保存
+  $tpl['attachments'] = $att ? [['type'=>'link','url'=>$att]] : [];
   if ($id>0) $storage->updateTemplate($u['id'], $id, $tpl);
   else $storage->createTemplate($u['id'], $tpl);
   header('Location: /templates'); exit;

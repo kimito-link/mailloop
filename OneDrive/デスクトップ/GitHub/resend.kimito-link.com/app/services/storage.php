@@ -183,8 +183,9 @@ final class MysqlStorage implements Storage {
   public function listTemplates(int $userId, string $q=''): array {
     $pdo=$this->requirePdo();
     if ($q!=='') {
+      $like = '%'.$q.'%';
       $stmt=$pdo->prepare("SELECT * FROM message_templates WHERE user_id=:uid AND (title LIKE :q OR subject LIKE :q) ORDER BY updated_at DESC");
-      $stmt->execute([':uid'=>$userId, ':q'=>'%'.$q.'%']);
+      $stmt->execute([':uid'=>$userId, ':q'=>$like]);
     } else {
       $stmt=$pdo->prepare("SELECT * FROM message_templates WHERE user_id=:uid ORDER BY updated_at DESC");
       $stmt->execute([':uid'=>$userId]);
@@ -200,6 +201,10 @@ final class MysqlStorage implements Storage {
   }
   public function createTemplate(int $userId, array $t): int {
     $pdo=$this->requirePdo();
+    $att = json_encode($t['attachments'] ?? [], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+    if ($att === false) {
+      throw new RuntimeException('attachments JSON encode failed');
+    }
     $stmt=$pdo->prepare("INSERT INTO message_templates (user_id,title,subject,body_text,attachments_json,last_sent_at,created_at,updated_at)
                          VALUES (:uid,:title,:subject,:body,:att,NULL,NOW(),NOW())");
     $stmt->execute([
@@ -207,18 +212,22 @@ final class MysqlStorage implements Storage {
       ':title'=>$t['title'],
       ':subject'=>$t['subject'],
       ':body'=>$t['body_text'],
-      ':att'=>json_encode($t['attachments'] ?? [], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),
+      ':att'=>$att,
     ]);
     return (int)$pdo->lastInsertId();
   }
   public function updateTemplate(int $userId, int $id, array $t): void {
     $pdo=$this->requirePdo();
+    $att = json_encode($t['attachments'] ?? [], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+    if ($att === false) {
+      throw new RuntimeException('attachments JSON encode failed');
+    }
     $stmt=$pdo->prepare("UPDATE message_templates SET title=:title, subject=:subject, body_text=:body, attachments_json=:att, updated_at=NOW()
                          WHERE user_id=:uid AND id=:id");
     $stmt->execute([
       ':uid'=>$userId, ':id'=>$id,
       ':title'=>$t['title'], ':subject'=>$t['subject'], ':body'=>$t['body_text'],
-      ':att'=>json_encode($t['attachments'] ?? [], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),
+      ':att'=>$att,
     ]);
   }
   public function deleteTemplate(int $userId, int $id): void {

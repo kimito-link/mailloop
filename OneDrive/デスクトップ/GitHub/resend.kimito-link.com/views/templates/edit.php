@@ -1,6 +1,17 @@
 <?php $view='templates/edit'; $id = $t['id'] ?? 0; ?>
 <h1><?= $id ? 'テンプレ編集' : 'テンプレ作成' ?></h1>
 
+<?php if (!empty($errors)): ?>
+  <div style="background: #fee; border: 1px solid #fcc; padding: 10px; margin-bottom: 15px; border-radius: 4px;">
+    <strong style="color: #c00;">エラー:</strong>
+    <ul style="margin: 5px 0 0 20px; padding: 0;">
+      <?php foreach ($errors as $err): ?>
+        <li style="color: #c00;"><?= htmlspecialchars($err) ?></li>
+      <?php endforeach; ?>
+    </ul>
+  </div>
+<?php endif; ?>
+
 <form method="post" action="/templates/save" class="form">
   <input type="hidden" name="id" value="<?=htmlspecialchars((string)$id)?>">
   <label>タイトル（自分用）</label>
