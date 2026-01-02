@@ -1,0 +1,34 @@
+# 機密情報
+config/secrets.php
+
+# 一時ファイル
+*.log
+*.tmp
+php-error.log
+
+# OS固有ファイル
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# エディタ固有
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ドキュメント（開発用）
+GPT_*.md
+*_CONSULTATION*.md
+EXECUTE_*.md
+EXECUTION_*.md
+CURRENT_STATUS*.md
+SSH_CONNECTION*.md
+DEPLOYMENT_STEPS.md
+STATUS_REPORT.md
+
+# バックアップ
+*.backup
+*.bak
+*~
