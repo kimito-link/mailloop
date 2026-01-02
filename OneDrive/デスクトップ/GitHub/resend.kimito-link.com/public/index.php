@@ -96,44 +96,89 @@ route('GET', '/', function() {
 });
 
 route('GET', '/auth/login', function() use ($config) {
-  header('Location: ' . google_auth_url($config)); exit;
+  $_SESSION['oauth_state'] = bin2hex(random_bytes(32));
+  $url = google_auth_url($config, $_SESSION['oauth_state']);
+  header('Location: ' . $url);
+  exit;
 });
 
 route('GET', '/auth/callback', function() use ($config, $storage) {
+  // 1) ユーザー拒否
+  if (!empty($_GET['error'])) {
+    error_log('OAuth error: ' . ($_GET['error_description'] ?? $_GET['error']));
+    render_error('認証がキャンセルされました。もう一度お試しください。');
+    return;
+  }
+
+  // 2) state検証
+  $state = $_GET['state'] ?? '';
+  if (empty($state) || empty($_SESSION['oauth_state']) || !hash_equals($_SESSION['oauth_state'], $state)) {
+    http_response_code(400);
+    render_error('不正な認証リクエストです（state不一致）');
+    return;
+  }
+  unset($_SESSION['oauth_state']);
+
+  // 3) code
   $code = $_GET['code'] ?? '';
-  if ($code === '') { echo 'Missing code'; return; }
+  if ($code === '') {
+    http_response_code(400);
+    render_error('認証コードが取得できませんでした。');
+    return;
+  }
+
+  // 4) code -> token
   [$resp, $data] = google_exchange_code($config, $code);
   if (($resp['code'] ?? 0) !== 200 || empty($data['access_token'])) {
-    echo "OAuth failed: " . htmlspecialchars($resp['body']); return;
+    error_log('Token exchange failed: ' . ($resp['body'] ?? '') );
+    render_error('認証に失敗しました（token取得失敗）');
+    return;
   }
+
   $access = $data['access_token'];
-  $refresh = $data['refresh_token'] ?? '';
+  $refresh = $data['refresh_token'] ?? null;
+  $expiresIn = (int)($data['expires_in'] ?? 3500);
+
+  // 5) userinfo
   [$uResp, $uData] = google_userinfo($access);
-  if (($uResp['code'] ?? 0) !== 200 || empty($uData['email'])) {
-    echo "Userinfo failed: " . htmlspecialchars($uResp['body']); return;
+  $sub = $uData['sub'] ?? ($uData['id'] ?? '');
+  if (($uResp['code'] ?? 0) !== 200 || $sub === '') {
+    error_log('Userinfo failed: ' . ($uResp['body'] ?? '') );
+    render_error('認証に失敗しました（ユーザー情報取得失敗）');
+    return;
   }
-  $userId = abs(crc32($uData['id'] ?? $uData['email']));
+
+  // 6) users upsert
   $user = [
-    'id' => $userId,
-    'email' => $uData['email'],
-    'name' => $uData['name'] ?? $uData['email'],
-    'avatar' => $uData['picture'] ?? '',
+    'provider' => 'google',
+    'provider_sub' => $sub,
+    'email' => $uData['email'] ?? null,
+    'name' => $uData['name'] ?? null,
+    'picture' => $uData['picture'] ?? null,
   ];
-  $storage->upsertUser($user);
+  $user = $storage->upsertUser($user);
+  $userId = (int)$user['id'];
 
-  // ログイン成功時: セッションID再生成 + CSRFトークン再生成
-  session_regenerate_id(true);
-  $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); // 即座に再生成
-
-  $token = [
+  // 7) token保存（storage側が encrypt する形でもOKだが、今の流儀に合わせてここでencrypt）
+  $tokenRow = [
     'access_token_enc' => encrypt_str($access, $config['APP_KEY']),
     'refresh_token_enc' => $refresh ? encrypt_str($refresh, $config['APP_KEY']) : null,
-    'expires_at' => date('Y-m-d H:i:s', time() + (int)($data['expires_in'] ?? 3500)),
+    'expires_at' => date('Y-m-d H:i:s', time() + $expiresIn),
     'scopes' => $config['GMAIL_SCOPE'],
   ];
-  $storage->saveToken($userId, $token);
+  $storage->saveToken($userId, $tokenRow);
 
-  header('Location: /templates'); exit;
+  // 8) セッション確立
+  session_regenerate_id(true);
+  $_SESSION['user_id'] = $userId;
+  $_SESSION['user'] = $user;
+
+  // 9) CSRF再生成
+  $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+
+  // 10) リダイレクト
+  header('Location: /templates');
+  exit;
 });
 
 route('POST', '/auth/logout', function() {
@@ -142,34 +187,18 @@ route('POST', '/auth/logout', function() {
 });
 
 // Templates
-// TODO: OAuth実装後は require_login に戻す
 route('GET', '/templates', function() use ($storage) {
-  // 一時的にダミーユーザーで動作確認（OAuth実装前）
-  $u = $storage->getUser();
-  if (!$u) {
-    $u = ['id' => 1, 'email' => 'test@example.com', 'name' => 'Test User'];
-    $storage->upsertUser($u);
-  }
+  $u = require_login($storage);
   $q = $_GET['q'] ?? '';
   $templates = $storage->listTemplates($u['id'], $q);
   render_view('templates/index', ['user'=>$u, 'templates'=>$templates, 'q'=>$q, 'page'=>'templates']);
 });
 route('GET', '/templates/new', function() use ($storage) {
-  // 一時的にダミーユーザーで動作確認（OAuth実装前）
-  $u = $storage->getUser();
-  if (!$u) {
-    $u = ['id' => 1, 'email' => 'test@example.com', 'name' => 'Test User'];
-    $storage->upsertUser($u);
-  }
+  $u = require_login($storage);
   render_view('templates/edit', ['user'=>$u, 't'=>null, 'page'=>'templates']);
 });
 route('GET', '/templates/edit', function() use ($storage) {
-  // 一時的にダミーユーザーで動作確認（OAuth実装前）
-  $u = $storage->getUser();
-  if (!$u) {
-    $u = ['id' => 1, 'email' => 'test@example.com', 'name' => 'Test User'];
-    $storage->upsertUser($u);
-  }
+  $u = require_login($storage);
   $id = (int)($_GET['id'] ?? 0);
   $t = $storage->getTemplate($u['id'], $id);
   if (!$t) { header('Location: /templates'); exit; }
@@ -180,12 +209,7 @@ route('POST', '/templates/save', function() use ($storage) {
   if (!csrf_verify()) {
     return;
   }
-  // 一時的にダミーユーザーで動作確認（OAuth実装前）
-  $u = $storage->getUser();
-  if (!$u) {
-    $u = ['id' => 1, 'email' => 'test@example.com', 'name' => 'Test User'];
-    $storage->upsertUser($u);
-  }
+  $u = require_login($storage);
   $id = (int)($_POST['id'] ?? 0);
   $title = trim($_POST['title'] ?? '');
   $subject = trim($_POST['subject'] ?? '');
@@ -228,34 +252,18 @@ route('POST', '/templates/delete', function() use ($storage) {
 });
 
 // Groups
-// TODO: OAuth実装後は require_login に戻す
 route('GET', '/groups', function() use ($storage) {
-  // 一時的にダミーユーザーで動作確認（OAuth実装前）
-  $u = $storage->getUser();
-  if (!$u) {
-    $u = ['id' => 1, 'email' => 'test@example.com', 'name' => 'Test User'];
-    $storage->upsertUser($u);
-  }
+  $u = require_login($storage);
   $q = $_GET['q'] ?? '';
   $groups = $storage->listGroups($u['id'], $q);
   render_view('groups/index', ['user'=>$u, 'groups'=>$groups, 'q'=>$q, 'page'=>'groups']);
 });
 route('GET', '/groups/new', function() use ($storage) {
-  // 一時的にダミーユーザーで動作確認（OAuth実装前）
-  $u = $storage->getUser();
-  if (!$u) {
-    $u = ['id' => 1, 'email' => 'test@example.com', 'name' => 'Test User'];
-    $storage->upsertUser($u);
-  }
+  $u = require_login($storage);
   render_view('groups/edit', ['user'=>$u, 'g'=>null, 'warn'=>[], 'page'=>'groups']);
 });
 route('GET', '/groups/edit', function() use ($storage) {
-  // 一時的にダミーユーザーで動作確認（OAuth実装前）
-  $u = $storage->getUser();
-  if (!$u) {
-    $u = ['id' => 1, 'email' => 'test@example.com', 'name' => 'Test User'];
-    $storage->upsertUser($u);
-  }
+  $u = require_login($storage);
   $id=(int)($_GET['id']??0);
   $g=$storage->getGroup($u['id'],$id);
   if(!$g){ header('Location: /groups'); exit; }
@@ -266,12 +274,7 @@ route('POST', '/groups/save', function() use ($storage) {
   if (!csrf_verify()) {
     return;
   }
-  // 一時的にダミーユーザーで動作確認（OAuth実装前）
-  $u = $storage->getUser();
-  if (!$u) {
-    $u = ['id' => 1, 'email' => 'test@example.com', 'name' => 'Test User'];
-    $storage->upsertUser($u);
-  }
+  $u = require_login($storage);
   $id=(int)($_POST['id']??0);
   $name=trim($_POST['name']??'');
   $to=parse_email_list($_POST['to_list']??'');
@@ -315,12 +318,7 @@ route('POST', '/groups/delete', function() use ($storage) {
   if (!csrf_verify()) {
     return;
   }
-  // 一時的にダミーユーザーで動作確認（OAuth実装前）
-  $u = $storage->getUser();
-  if (!$u) {
-    $u = ['id' => 1, 'email' => 'test@example.com', 'name' => 'Test User'];
-    $storage->upsertUser($u);
-  }
+  $u = require_login($storage);
   $id=(int)($_POST['id']??0);
   if($id>0) $storage->deleteGroup($u['id'],$id);
   header('Location: /groups'); exit;
@@ -367,19 +365,14 @@ route('POST', '/send/execute', function() use ($storage, $config) {
   $g=$storage->getGroup($u['id'],$group_id);
   if(!$t || !$g){ header('Location: /send'); exit; }
 
-  $tokRow=$storage->getToken($u['id']);
-  if(!$tokRow){ echo "No token. Please login again."; return; }
-  $access=decrypt_str($tokRow['access_token_enc'], $config['APP_KEY']);
-  $refresh=$tokRow['refresh_token_enc'] ? decrypt_str($tokRow['refresh_token_enc'], $config['APP_KEY']) : '';
-
-  if (!empty($tokRow['expires_at']) && strtotime($tokRow['expires_at']) < time()+30 && $refresh) {
-    [$rResp,$rData]=google_refresh_token($config,$refresh);
-    if(($rResp['code']??0)===200 && !empty($rData['access_token'])) {
-      $access=$rData['access_token'];
-      $tokRow['access_token_enc']=encrypt_str($access, $config['APP_KEY']);
-      $tokRow['expires_at']=date('Y-m-d H:i:s', time() + (int)($rData['expires_in'] ?? 3500));
-      $storage->saveToken($u['id'], $tokRow);
-    }
+  // トークン取得（期限切れが近ければ自動refresh）
+  require_once __DIR__ . '/../app/services/token_manager.php';
+  try {
+    $access = get_google_access_token_or_refresh($storage, $config, (int)$u['id']);
+  } catch (RuntimeException $e) {
+    error_log('Token refresh failed in /send/execute: ' . $e->getMessage());
+    header('Location: /auth/login?reauth=1');
+    exit;
   }
 
   $to = $g['to'] ?? (json_decode($g['to_json'] ?? '[]', true) ?: []);
@@ -397,8 +390,24 @@ route('POST', '/send/execute', function() use ($storage, $config) {
     'body_text'=>$body,
   ];
 
+  // Gmail送信（401の場合は一度だけrefreshして再試行）
   [$sResp,$sData]=gmail_send_message($access, $mail);
-  $status = (($sResp['code']??0)===200) ? 'success' : 'failed';
+  $httpCode = (int)($sResp['code'] ?? 0);
+  
+  // 401の場合は一度だけrefreshして再試行
+  if ($httpCode === 401) {
+    try {
+      $access = force_refresh_google_access_token($storage, $config, (int)$u['id']);
+      [$sResp,$sData]=gmail_send_message($access, $mail);
+      $httpCode = (int)($sResp['code'] ?? 0);
+    } catch (RuntimeException $e) {
+      error_log('Force refresh failed in /send/execute: ' . $e->getMessage());
+      header('Location: /auth/login?reauth=1');
+      exit;
+    }
+  }
+  
+  $status = ($httpCode === 200) ? 'success' : 'failed';
   $error = $status==='failed' ? ['code'=>$sResp['code'],'curl_error'=>$sResp['error'],'body'=>$sResp['body']] : null;
 
   $logId = $storage->createLog($u['id'], [
