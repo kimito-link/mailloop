@@ -51,8 +51,15 @@ final class FileStorage implements Storage {
   private function write(string $name, $data): void {
     file_put_contents($this->path($name), json_encode($data, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
   }
-  public function getUser(): ?array { return $_SESSION['user'] ?? null; }
-  public function upsertUser(array $u): array { $_SESSION['user'] = $u; return $u; }
+  public function getUser(): ?array { return isset($_SESSION['user']) ? $_SESSION['user'] : null; }
+  public function upsertUser(array $u): array {
+    // idが未設定の場合は1を設定（FileStorageでは固定ID）
+    if (!isset($u['id'])) {
+      $u['id'] = 1;
+    }
+    $_SESSION['user'] = $u;
+    return $u;
+  }
 
   public function saveToken(int $userId, array $token): void {
     $all = $this->read('tokens', []);
@@ -157,13 +164,82 @@ final class MysqlStorage implements Storage {
     if (!$this->pdo) throw new RuntimeException('DB接続失敗。configとテーブル作成を確認してください。');
     return $this->pdo;
   }
-  public function getUser(): ?array { return $_SESSION['user'] ?? null; }
-  public function upsertUser(array $u): array { $_SESSION['user']=$u; return $u; }
+  public function getUser(): ?array { return isset($_SESSION['user']) ? $_SESSION['user'] : null; }
+  public function upsertUser(array $u): array {
+    $pdo = $this->requirePdo();
+
+    $provider = $u['provider'];
+    $sub = $u['provider_sub'];
+
+    // provider+sub で確定
+    $stmt = $pdo->prepare("SELECT id, email FROM users WHERE provider=:p AND provider_sub=:s LIMIT 1");
+    $stmt->execute([':p'=>$provider, ':s'=>$sub]);
+    $row = $stmt->fetch();
+
+    if ($row) {
+      $id = (int)$row['id'];
+
+      // emailは衝突する可能性があるので try/catch
+      try {
+        $stmt = $pdo->prepare("UPDATE users SET email=:email, name=:name, picture=:pic, updated_at=NOW() WHERE id=:id");
+        $stmt->execute([
+          ':id'=>$id,
+          ':email'=>$u['email'] ?? null,
+          ':name'=>$u['name'] ?? null,
+          ':pic'=>$u['picture'] ?? null,
+        ]);
+      } catch (PDOException $e) {
+        // email UNIQUE など（SQLSTATE 23000）
+        error_log('upsertUser email update failed: ' . $e->getMessage());
+        // email更新は諦めて name/picture だけ更新（ログインは通す）
+        $stmt = $pdo->prepare("UPDATE users SET name=:name, picture=:pic, updated_at=NOW() WHERE id=:id");
+        $stmt->execute([
+          ':id'=>$id,
+          ':name'=>$u['name'] ?? null,
+          ':pic'=>$u['picture'] ?? null,
+        ]);
+      }
+
+      $u['id'] = $id;
+    } else {
+      // 新規
+      try {
+        $stmt = $pdo->prepare("INSERT INTO users (provider, provider_sub, email, name, picture, created_at, updated_at)
+                               VALUES (:p,:s,:email,:name,:pic,NOW(),NOW())");
+        $stmt->execute([
+          ':p'=>$provider,
+          ':s'=>$sub,
+          ':email'=>$u['email'] ?? null,
+          ':name'=>$u['name'] ?? null,
+          ':pic'=>$u['picture'] ?? null,
+        ]);
+        $u['id'] = (int)$pdo->lastInsertId();
+      } catch (PDOException $e) {
+        // ここでコケるなら subの同時作成競合の可能性 → 再SELECT
+        error_log('upsertUser insert failed: ' . $e->getMessage());
+        $stmt = $pdo->prepare("SELECT id FROM users WHERE provider=:p AND provider_sub=:s LIMIT 1");
+        $stmt->execute([':p'=>$provider, ':s'=>$sub]);
+        $r2 = $stmt->fetch();
+        if (!$r2) throw $e;
+        $u['id'] = (int)$r2['id'];
+      }
+    }
+
+    // 既存動作維持
+    $_SESSION['user'] = $u;
+    return $u;
+  }
 
   public function saveToken(int $userId, array $token): void {
     $pdo=$this->requirePdo();
-    $stmt=$pdo->prepare("REPLACE INTO oauth_tokens (user_id, provider, access_token_enc, refresh_token_enc, expires_at, scopes, updated_at, created_at)
-                         VALUES (:uid,'google',:at,:rt,:exp,:sc,NOW(),NOW())");
+    $stmt=$pdo->prepare("INSERT INTO oauth_tokens (user_id, provider, access_token_enc, refresh_token_enc, expires_at, scopes, created_at, updated_at)
+                         VALUES (:uid,'google',:at,:rt,:exp,:sc,NOW(),NOW())
+                         ON DUPLICATE KEY UPDATE
+                           access_token_enc = VALUES(access_token_enc),
+                           refresh_token_enc = COALESCE(VALUES(refresh_token_enc), refresh_token_enc),
+                           expires_at = VALUES(expires_at),
+                           scopes = VALUES(scopes),
+                           updated_at = NOW()");
     $stmt->execute([
       ':uid'=>$userId,
       ':at'=>$token['access_token_enc'],
@@ -239,8 +315,9 @@ final class MysqlStorage implements Storage {
   public function listGroups(int $userId, string $q=''): array {
     $pdo=$this->requirePdo();
     if ($q!=='') {
+      $like = '%'.$q.'%';
       $stmt=$pdo->prepare("SELECT * FROM recipient_groups WHERE user_id=:uid AND name LIKE :q ORDER BY updated_at DESC");
-      $stmt->execute([':uid'=>$userId, ':q'=>'%'.$q.'%']);
+      $stmt->execute([':uid'=>$userId, ':q'=>$like]);
     } else {
       $stmt=$pdo->prepare("SELECT * FROM recipient_groups WHERE user_id=:uid ORDER BY updated_at DESC");
       $stmt->execute([':uid'=>$userId]);
@@ -256,25 +333,37 @@ final class MysqlStorage implements Storage {
   }
   public function createGroup(int $userId, array $g): int {
     $pdo=$this->requirePdo();
+    $to = json_encode($g['to'] ?? [], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+    $cc = json_encode($g['cc'] ?? [], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+    $bcc = json_encode($g['bcc'] ?? [], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+    if ($to === false || $cc === false || $bcc === false) {
+      throw new RuntimeException('recipient_groups JSON encode failed');
+    }
     $stmt=$pdo->prepare("INSERT INTO recipient_groups (user_id,name,to_json,cc_json,bcc_json,created_at,updated_at)
                          VALUES (:uid,:name,:to,:cc,:bcc,NOW(),NOW())");
     $stmt->execute([
       ':uid'=>$userId, ':name'=>$g['name'],
-      ':to'=>json_encode($g['to'] ?? [], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),
-      ':cc'=>json_encode($g['cc'] ?? [], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),
-      ':bcc'=>json_encode($g['bcc'] ?? [], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),
+      ':to'=>$to,
+      ':cc'=>$cc,
+      ':bcc'=>$bcc,
     ]);
     return (int)$pdo->lastInsertId();
   }
   public function updateGroup(int $userId, int $id, array $g): void {
     $pdo=$this->requirePdo();
+    $to = json_encode($g['to'] ?? [], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+    $cc = json_encode($g['cc'] ?? [], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+    $bcc = json_encode($g['bcc'] ?? [], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+    if ($to === false || $cc === false || $bcc === false) {
+      throw new RuntimeException('recipient_groups JSON encode failed');
+    }
     $stmt=$pdo->prepare("UPDATE recipient_groups SET name=:name, to_json=:to, cc_json=:cc, bcc_json=:bcc, updated_at=NOW()
                          WHERE user_id=:uid AND id=:id");
     $stmt->execute([
       ':uid'=>$userId, ':id'=>$id, ':name'=>$g['name'],
-      ':to'=>json_encode($g['to'] ?? [], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),
-      ':cc'=>json_encode($g['cc'] ?? [], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),
-      ':bcc'=>json_encode($g['bcc'] ?? [], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),
+      ':to'=>$to,
+      ':cc'=>$cc,
+      ':bcc'=>$bcc,
     ]);
   }
   public function deleteGroup(int $userId, int $id): void {
@@ -297,6 +386,54 @@ final class MysqlStorage implements Storage {
       ':mid'=>$log['gmail_message_id'] ?? null,
     ]);
     return (int)$pdo->lastInsertId();
+  }
+  /**
+   * send_attempt_id を使ってログを upsert（同一送信試行は1行にまとめる）
+   * 
+   * @param int $userId
+   * @param array $log ['send_attempt_id' => string, 'template_id' => int, ...]
+   * @return int ログID
+   */
+  public function upsertLogByAttempt(int $userId, array $log): int {
+    $pdo=$this->requirePdo();
+    $attemptId = $log['send_attempt_id'] ?? null;
+    if (!$attemptId) {
+      throw new RuntimeException('send_attempt_id is required for upsertLogByAttempt');
+    }
+    
+    $sql = "
+      INSERT INTO send_logs
+        (send_attempt_id, user_id, template_id, group_id, subject_snapshot, body_snapshot,
+         attachments_snapshot_json, recipient_counts_json, status, error_json, gmail_message_id, created_at, updated_at)
+      VALUES
+        (:aid, :uid, :tid, :gid, :sub, :body, :att, :cnt, :st, :err, :mid, NOW(), NOW())
+      ON DUPLICATE KEY UPDATE
+        status = VALUES(status),
+        error_json = VALUES(error_json),
+        gmail_message_id = COALESCE(VALUES(gmail_message_id), gmail_message_id),
+        recipient_counts_json = VALUES(recipient_counts_json),
+        updated_at = NOW()
+    ";
+    $stmt=$pdo->prepare($sql);
+    $stmt->execute([
+      ':aid'=>$attemptId,
+      ':uid'=>$userId,
+      ':tid'=>$log['template_id'],
+      ':gid'=>$log['group_id'],
+      ':sub'=>$log['subject_snapshot'],
+      ':body'=>$log['body_snapshot'],
+      ':att'=>json_encode($log['attachments_snapshot'] ?? [], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),
+      ':cnt'=>json_encode($log['counts'] ?? [], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),
+      ':st'=>$log['status'],
+      ':err'=>isset($log['error'])?json_encode($log['error'], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES):null,
+      ':mid'=>$log['gmail_message_id'] ?? null,
+    ]);
+    
+    // INSERT/UPDATEどちらでもIDが欲しいので、別途SELECT
+    $stmt2=$pdo->prepare("SELECT id FROM send_logs WHERE send_attempt_id=:aid LIMIT 1");
+    $stmt2->execute([':aid'=>$attemptId]);
+    $logId = $stmt2->fetchColumn();
+    return $logId ? (int)$logId : (int)$pdo->lastInsertId();
   }
   public function listLogs(int $userId): array {
     $pdo=$this->requirePdo();

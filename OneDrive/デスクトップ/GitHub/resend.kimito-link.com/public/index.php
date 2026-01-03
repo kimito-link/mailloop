@@ -1,5 +1,5 @@
 <?php
-declare(strict_types=1);
+// declare(strict_types=1); // XserverのPHPバージョンが古いためコメントアウト
 require_once __DIR__ . '/../app/bootstrap.php';
 require_once __DIR__ . '/../views/helpers/emails.php';
 
@@ -107,28 +107,133 @@ route('GET', '/', function() use ($storage) {
 });
 
 route('GET', '/auth/login', function() use ($config) {
-  $_SESSION['oauth_state'] = bin2hex(random_bytes(32));
-  $url = google_auth_url($config, $_SESSION['oauth_state']);
+  // デバッグモード（/auth/login?debug=1）
+  if (isset($_GET['debug']) && $_GET['debug'] === '1') {
+    $state = oauth_build_state($config, $_SERVER);
+    if ($state === false) {
+      header('Content-Type: text/html; charset=UTF-8');
+      echo "<h1>Error: APP_KEY not configured</h1>";
+      echo "<p>Please set APP_KEY in config/secrets.php</p>";
+      exit;
+    }
+    
+    $url = google_auth_url($config, $state);
+    $hasState = strpos($url, 'state=') !== false;
+    
+    header('Content-Type: text/html; charset=UTF-8');
+    echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>OAuth Debug</title></head><body>";
+    echo "<h1>OAuth認可URLデバッグ</h1>";
+    echo "<h2>生成されたState（先頭32文字）:</h2>";
+    echo "<code>" . htmlspecialchars(substr($state, 0, 32)) . "...</code>";
+    echo "<h2>認可URL:</h2>";
+    echo "<p><a href='" . htmlspecialchars($url) . "' target='_blank'>" . htmlspecialchars($url) . "</a></p>";
+    echo "<h2>State検証:</h2>";
+    if ($hasState) {
+      echo "<p style='color:green;'>✅ stateパラメータが含まれています</p>";
+    } else {
+      echo "<p style='color:red;'>❌ stateパラメータが含まれていません！</p>";
+    }
+    echo "<h2>ファイルパス:</h2>";
+    echo "<code>" . htmlspecialchars(__FILE__) . "</code>";
+    echo "</body></html>";
+    exit;
+  }
+  
+  // 通常のリダイレクト版（セッション不要）
+  $state = oauth_build_state($config, $_SERVER);
+  if ($state === false) {
+    http_response_code(500);
+    render_error('認証システムの設定エラーです。管理者に連絡してください。');
+    return;
+  }
+  
+  $url = google_auth_url($config, $state);
+  if (function_exists('app_log')) {
+    app_log('LOGIN: redirect to Google with state (first 16 chars: ' . substr($state, 0, 16) . ')');
+  }
+  
   header('Location: ' . $url);
   exit;
 });
 
 route('GET', '/auth/callback', function() use ($config, $storage) {
+  // 0) stateが来てない場合の表示（切り分け高速化）
+  $state = isset($_GET['state']) ? $_GET['state'] : '';
+  if (empty($state)) {
+    $isProd = isset($config['APP_ENV']) && $config['APP_ENV'] === 'prod';
+    if (!$isProd) {
+      // 開発環境: 詳細なデバッグ情報を表示
+      header('Content-Type: text/html; charset=UTF-8');
+      echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>STATE_MISSING_FROM_GOOGLE_CALLBACK</title></head><body>";
+      echo "<h1>❌ STATE_MISSING_FROM_GOOGLE_CALLBACK</h1>";
+      echo "<p>Googleからのコールバックにstateパラメータが含まれていません。</p>";
+      echo "<h2>REQUEST_URI:</h2>";
+      echo "<code>" . htmlspecialchars(isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : 'NONE') . "</code>";
+      echo "<h2>GET パラメータ:</h2>";
+      echo "<ul>";
+      echo "<li>code: " . (isset($_GET['code']) ? 'あり（' . substr($_GET['code'], 0, 20) . '...）' : 'なし') . "</li>";
+      echo "<li>scope: " . (isset($_GET['scope']) ? 'あり' : 'なし') . "</li>";
+      echo "<li>state: なし</li>";
+      echo "</ul>";
+      echo "<h2>デバッグ:</h2>";
+      echo "<p><a href='/auth/login?debug=1'>認可URLを確認する（/auth/login?debug=1）</a></p>";
+      echo "</body></html>";
+      exit;
+    } else {
+      // 本番環境: 一般エラー
+      http_response_code(400);
+      render_error('不正な認証リクエストです（stateパラメータがありません）');
+      return;
+    }
+  }
+  
   // 1) ユーザー拒否
   if (!empty($_GET['error'])) {
-    error_log('OAuth error: ' . ($_GET['error_description'] ?? $_GET['error']));
+    $errorDesc = isset($_GET['error_description']) ? $_GET['error_description'] : (isset($_GET['error']) ? $_GET['error'] : '');
+    if (function_exists('app_log')) {
+      app_log('OAuth error: ' . $errorDesc);
+    }
     render_error('認証がキャンセルされました。もう一度お試しください。');
     return;
   }
 
-  // 2) state検証
-  $state = $_GET['state'] ?? '';
-  if (empty($state) || empty($_SESSION['oauth_state']) || !hash_equals($_SESSION['oauth_state'], $state)) {
-    http_response_code(400);
-    render_error('不正な認証リクエストです（state不一致）');
-    return;
+  // 2) state検証（署名ベース、セッション不要）
+  if (function_exists('app_log')) {
+    app_log('CALLBACK: URI=' . (isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : 'NONE'));
+    app_log('CALLBACK: GET state=' . substr($state, 0, 32) . '...');
   }
-  unset($_SESSION['oauth_state']);
+  
+  $errMsg = '';
+  $stateValid = oauth_verify_state($config, $state, $_SERVER, $errMsg);
+  if (!$stateValid) {
+    if (function_exists('app_log')) {
+      app_log('CALLBACK: STATE VERIFICATION FAILED: ' . $errMsg);
+    }
+    
+    $isProd = isset($config['APP_ENV']) && $config['APP_ENV'] === 'prod';
+    if (!$isProd) {
+      // 開発環境: 詳細なエラー情報を表示
+      header('Content-Type: text/html; charset=UTF-8');
+      echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>State Verification Failed</title></head><body>";
+      echo "<h1>❌ State検証失敗</h1>";
+      echo "<p>エラー: " . htmlspecialchars($errMsg) . "</p>";
+      echo "<h2>REQUEST_URI:</h2>";
+      echo "<code>" . htmlspecialchars(isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : 'NONE') . "</code>";
+      echo "<h2>デバッグ:</h2>";
+      echo "<p><a href='/auth/login?debug=1'>認可URLを確認する（/auth/login?debug=1）</a></p>";
+      echo "</body></html>";
+      exit;
+    } else {
+      // 本番環境: 一般エラー
+      http_response_code(400);
+      render_error('不正な認証リクエストです（state検証失敗）');
+      return;
+    }
+  }
+  
+  if (function_exists('app_log')) {
+    app_log('CALLBACK: STATE VERIFICATION OK');
+  }
 
   // 3) code
   $code = $_GET['code'] ?? '';
@@ -140,21 +245,28 @@ route('GET', '/auth/callback', function() use ($config, $storage) {
 
   // 4) code -> token
   [$resp, $data] = google_exchange_code($config, $code);
-  if (($resp['code'] ?? 0) !== 200 || empty($data['access_token'])) {
-    error_log('Token exchange failed: ' . ($resp['body'] ?? '') );
+  // 古いPHP対応：??演算子の代わりにisset()を使用
+  $respCode = isset($resp['code']) ? (int)$resp['code'] : 0;
+  $accessToken = isset($data['access_token']) ? $data['access_token'] : '';
+  if ($respCode !== 200 || empty($accessToken)) {
+    $errorBody = isset($resp['body']) ? $resp['body'] : '';
+    error_log('Token exchange failed: ' . $errorBody);
     render_error('認証に失敗しました（token取得失敗）');
     return;
   }
 
-  $access = $data['access_token'];
-  $refresh = $data['refresh_token'] ?? null;
-  $expiresIn = (int)($data['expires_in'] ?? 3500);
+  $access = $accessToken;
+  $refresh = isset($data['refresh_token']) ? $data['refresh_token'] : null;
+  $expiresIn = isset($data['expires_in']) ? (int)$data['expires_in'] : 3500;
 
   // 5) userinfo
   [$uResp, $uData] = google_userinfo($access);
-  $sub = $uData['sub'] ?? ($uData['id'] ?? '');
-  if (($uResp['code'] ?? 0) !== 200 || $sub === '') {
-    error_log('Userinfo failed: ' . ($uResp['body'] ?? '') );
+  // 古いPHP対応：??演算子の代わりにisset()を使用
+  $sub = isset($uData['sub']) ? $uData['sub'] : (isset($uData['id']) ? $uData['id'] : '');
+  $respCode = isset($uResp['code']) ? (int)$uResp['code'] : 0;
+  if ($respCode !== 200 || $sub === '') {
+    $errorBody = isset($uResp['body']) ? $uResp['body'] : '';
+    error_log('Userinfo failed: ' . $errorBody);
     render_error('認証に失敗しました（ユーザー情報取得失敗）');
     return;
   }
@@ -163,11 +275,17 @@ route('GET', '/auth/callback', function() use ($config, $storage) {
   $user = [
     'provider' => 'google',
     'provider_sub' => $sub,
-    'email' => $uData['email'] ?? null,
-    'name' => $uData['name'] ?? null,
-    'picture' => $uData['picture'] ?? null,
+    'email' => isset($uData['email']) ? $uData['email'] : null,
+    'name' => isset($uData['name']) ? $uData['name'] : null,
+    'picture' => isset($uData['picture']) ? $uData['picture'] : null,
   ];
   $user = $storage->upsertUser($user);
+  // idが存在することを確認
+  if (!isset($user['id'])) {
+    error_log('upsertUser failed: id not returned');
+    render_error('認証に失敗しました（ユーザー登録失敗）');
+    return;
+  }
   $userId = (int)$user['id'];
 
   // 7) token保存（storage側が encrypt する形でもOKだが、今の流儀に合わせてここでencrypt）
