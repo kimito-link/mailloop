@@ -1,9 +1,7 @@
 <?php
 declare(strict_types=1);
 
-function base64url_encode(string $data): string {
-  return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
-}
+// base64url_encode()はgoogle_oauth.phpで定義されているため、ここでは定義しない
 function build_rfc822(array $mail): string {
   $headers = [];
   $headers[] = 'From: ' . $mail['from'];
