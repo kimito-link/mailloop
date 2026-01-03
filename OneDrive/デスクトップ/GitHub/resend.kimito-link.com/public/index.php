@@ -14,6 +14,15 @@ function render_view(string $viewName, array $vars = []) {
 function require_login($storage) {
   $u = $storage->getUser();
   if (!$u) { header('Location: /auth/login'); exit; }
+  // idが存在することを確認
+  if (!isset($u['id'])) {
+    error_log('require_login: user array missing id. user=' . print_r($u, true));
+    // セッションをクリアして再ログインを促す
+    session_unset();
+    session_destroy();
+    header('Location: /auth/login?error=session_invalid');
+    exit;
+  }
   return $u;
 }
 
@@ -112,34 +121,102 @@ route('GET', '/auth/login', function() use ($config) {
     $state = oauth_build_state($config, $_SERVER);
     if ($state === false) {
       header('Content-Type: text/html; charset=UTF-8');
-      echo "<h1>Error: APP_KEY not configured</h1>";
+      echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>OAuth Debug - Error</title></head><body>";
+      echo "<h1>❌ Error: APP_KEY not configured</h1>";
       echo "<p>Please set APP_KEY in config/secrets.php</p>";
+      echo "</body></html>";
       exit;
     }
     
     $url = google_auth_url($config, $state);
     $hasState = strpos($url, 'state=') !== false;
     
-    header('Content-Type: text/html; charset=UTF-8');
-    echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>OAuth Debug</title></head><body>";
-    echo "<h1>OAuth認可URLデバッグ</h1>";
-    echo "<h2>生成されたState（先頭32文字）:</h2>";
-    echo "<code>" . htmlspecialchars(substr($state, 0, 32)) . "...</code>";
-    echo "<h2>認可URL:</h2>";
-    echo "<p><a href='" . htmlspecialchars($url) . "' target='_blank'>" . htmlspecialchars($url) . "</a></p>";
-    echo "<h2>State検証:</h2>";
-    if ($hasState) {
-      echo "<p style='color:green;'>✅ stateパラメータが含まれています</p>";
-    } else {
-      echo "<p style='color:red;'>❌ stateパラメータが含まれていません！</p>";
+    // client_idの抽出と確認
+    $configClientId = isset($config['GOOGLE_CLIENT_ID']) ? $config['GOOGLE_CLIENT_ID'] : '';
+    $urlClientId = '';
+    if (preg_match('/[&?]client_id=([^&]+)/', $url, $matches)) {
+      $urlClientId = urldecode($matches[1]);
     }
-    echo "<h2>ファイルパス:</h2>";
-    echo "<code>" . htmlspecialchars(__FILE__) . "</code>";
+    $clientIdMatch = ($configClientId === $urlClientId);
+    
+    header('Content-Type: text/html; charset=UTF-8');
+    echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>OAuth Debug</title>";
+    echo "<style>body{font-family:sans-serif;max-width:1200px;margin:20px auto;padding:20px;}code{background:#f5f5f5;padding:2px 6px;border-radius:3px;word-break:break-all;}h2{margin-top:30px;border-bottom:2px solid #ddd;padding-bottom:5px;}.ok{color:green;font-weight:bold;}.ng{color:red;font-weight:bold;}.info{background:#e8f4f8;padding:15px;border-radius:5px;margin:10px 0;}</style>";
+    echo "</head><body>";
+    echo "<h1>OAuth認可URLデバッグ</h1>";
+    
+    // Client ID確認
+    echo "<h2>Client ID確認</h2>";
+    echo "<div class='info'>";
+    echo "<p><strong>config['GOOGLE_CLIENT_ID']:</strong><br>";
+    if (strlen($configClientId) > 0) {
+      echo "<code>" . htmlspecialchars(substr($configClientId, 0, 20)) . "..." . htmlspecialchars(substr($configClientId, -10)) . "</code> ";
+      echo "(長さ: " . strlen($configClientId) . "文字)";
+    } else {
+      echo "<span class='ng'>未設定</span>";
+    }
+    echo "</p>";
+    echo "<p><strong>認可URL内のclient_id:</strong><br>";
+    if (strlen($urlClientId) > 0) {
+      echo "<code>" . htmlspecialchars(substr($urlClientId, 0, 20)) . "..." . htmlspecialchars(substr($urlClientId, -10)) . "</code> ";
+      echo "(長さ: " . strlen($urlClientId) . "文字)";
+    } else {
+      echo "<span class='ng'>見つかりません</span>";
+    }
+    echo "</p>";
+    echo "<p><strong>一致確認:</strong> ";
+    if ($clientIdMatch) {
+      echo "<span class='ok'>✅ 一致しています</span>";
+    } else {
+      echo "<span class='ng'>❌ 一致していません！secrets.phpが正しく読み込まれていない可能性があります</span>";
+    }
+    echo "</p>";
+    echo "</div>";
+    
+    // State情報
+    echo "<h2>生成されたState</h2>";
+    echo "<p><strong>State（先頭32文字）:</strong><br><code>" . htmlspecialchars(substr($state, 0, 32)) . "...</code></p>";
+    echo "<p><strong>State（全体）:</strong><br><code>" . htmlspecialchars($state) . "</code></p>";
+    echo "<p><strong>State長さ:</strong> " . strlen($state) . "文字</p>";
+    
+    // 認可URL
+    echo "<h2>認可URL（AUTH URL）</h2>";
+    echo "<p><strong>完全なURL:</strong></p>";
+    echo "<p style='background:#f5f5f5;padding:10px;border-radius:5px;word-break:break-all;'>";
+    echo "<a href='" . htmlspecialchars($url) . "' target='_blank' style='color:#0066cc;'>" . htmlspecialchars($url) . "</a>";
+    echo "</p>";
+    
+    // State検証
+    echo "<h2>State検証</h2>";
+    if ($hasState) {
+      echo "<p class='ok'>✅ stateパラメータが含まれています</p>";
+      // stateの値を抽出して表示
+      if (preg_match('/[&?]state=([^&]+)/', $url, $stateMatches)) {
+        $urlState = urldecode($stateMatches[1]);
+        echo "<p><strong>URL内のstate値:</strong><br><code>" . htmlspecialchars($urlState) . "</code></p>";
+        $stateMatch = ($state === $urlState);
+        echo "<p><strong>State一致確認:</strong> ";
+        if ($stateMatch) {
+          echo "<span class='ok'>✅ 生成したstateとURL内のstateが一致しています</span>";
+        } else {
+          echo "<span class='ng'>❌ 生成したstateとURL内のstateが一致していません！</span>";
+        }
+        echo "</p>";
+      }
+    } else {
+      echo "<p class='ng'>❌ stateパラメータが含まれていません！</p>";
+    }
+    
+    // ファイルパス
+    echo "<h2>ファイル情報</h2>";
+    echo "<p><strong>実行ファイル:</strong><br><code>" . htmlspecialchars(__FILE__) . "</code></p>";
+    echo "<p><strong>実行時刻:</strong> " . date('Y-m-d H:i:s') . "</p>";
+    
     echo "</body></html>";
     exit;
   }
   
-  // 通常のリダイレクト版（セッション不要）
+  // 通常のリダイレクト版（署名付きstate、セッション不要）
   $state = oauth_build_state($config, $_SERVER);
   if ($state === false) {
     http_response_code(500);
@@ -164,16 +241,19 @@ route('GET', '/auth/callback', function() use ($config, $storage) {
     if (!$isProd) {
       // 開発環境: 詳細なデバッグ情報を表示
       header('Content-Type: text/html; charset=UTF-8');
-      echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>STATE_MISSING_FROM_GOOGLE_CALLBACK</title></head><body>";
-      echo "<h1>❌ STATE_MISSING_FROM_GOOGLE_CALLBACK</h1>";
+      echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>STATE_MISSING_FROM_GOOGLE_CALLBACK</title>";
+      echo "<style>body{font-family:sans-serif;max-width:1200px;margin:20px auto;padding:20px;}code{background:#f5f5f5;padding:2px 6px;border-radius:3px;word-break:break-all;}.ng{color:red;font-weight:bold;}</style>";
+      echo "</head><body>";
+      echo "<h1 class='ng'>❌ STATE_MISSING_FROM_GOOGLE_CALLBACK</h1>";
       echo "<p>Googleからのコールバックにstateパラメータが含まれていません。</p>";
       echo "<h2>REQUEST_URI:</h2>";
-      echo "<code>" . htmlspecialchars(isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : 'NONE') . "</code>";
+      $requestUri = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : 'NONE';
+      echo "<p style='background:#f5f5f5;padding:10px;border-radius:5px;word-break:break-all;'><code>" . htmlspecialchars($requestUri) . "</code></p>";
       echo "<h2>GET パラメータ:</h2>";
       echo "<ul>";
       echo "<li>code: " . (isset($_GET['code']) ? 'あり（' . substr($_GET['code'], 0, 20) . '...）' : 'なし') . "</li>";
       echo "<li>scope: " . (isset($_GET['scope']) ? 'あり' : 'なし') . "</li>";
-      echo "<li>state: なし</li>";
+      echo "<li class='ng'>state: なし</li>";
       echo "</ul>";
       echo "<h2>デバッグ:</h2>";
       echo "<p><a href='/auth/login?debug=1'>認可URLを確認する（/auth/login?debug=1）</a></p>";
@@ -214,11 +294,16 @@ route('GET', '/auth/callback', function() use ($config, $storage) {
     if (!$isProd) {
       // 開発環境: 詳細なエラー情報を表示
       header('Content-Type: text/html; charset=UTF-8');
-      echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>State Verification Failed</title></head><body>";
-      echo "<h1>❌ State検証失敗</h1>";
-      echo "<p>エラー: " . htmlspecialchars($errMsg) . "</p>";
+      echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>State Verification Failed</title>";
+      echo "<style>body{font-family:sans-serif;max-width:1200px;margin:20px auto;padding:20px;}code{background:#f5f5f5;padding:2px 6px;border-radius:3px;word-break:break-all;}.ng{color:red;font-weight:bold;}</style>";
+      echo "</head><body>";
+      echo "<h1 class='ng'>❌ State検証失敗</h1>";
+      echo "<p><strong>エラー:</strong> " . htmlspecialchars($errMsg) . "</p>";
       echo "<h2>REQUEST_URI:</h2>";
-      echo "<code>" . htmlspecialchars(isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : 'NONE') . "</code>";
+      $requestUri = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : 'NONE';
+      echo "<p style='background:#f5f5f5;padding:10px;border-radius:5px;word-break:break-all;'><code>" . htmlspecialchars($requestUri) . "</code></p>";
+      echo "<h2>受信したstate:</h2>";
+      echo "<p style='background:#f5f5f5;padding:10px;border-radius:5px;word-break:break-all;'><code>" . htmlspecialchars($state) . "</code></p>";
       echo "<h2>デバッグ:</h2>";
       echo "<p><a href='/auth/login?debug=1'>認可URLを確認する（/auth/login?debug=1）</a></p>";
       echo "</body></html>";
@@ -279,12 +364,118 @@ route('GET', '/auth/callback', function() use ($config, $storage) {
     'name' => isset($uData['name']) ? $uData['name'] : null,
     'picture' => isset($uData['picture']) ? $uData['picture'] : null,
   ];
-  $user = $storage->upsertUser($user);
-  // idが存在することを確認
-  if (!isset($user['id'])) {
-    error_log('upsertUser failed: id not returned');
-    render_error('認証に失敗しました（ユーザー登録失敗）');
-    return;
+  
+  $isProd = isset($config['APP_ENV']) && $config['APP_ENV'] === 'prod';
+  try {
+    $user = $storage->upsertUser($user);
+    // idが存在することを確認
+    if (!isset($user['id'])) {
+      error_log('upsertUser failed: id not returned');
+      if (!$isProd) {
+        // 開発環境: 詳細なデバッグ情報を表示
+        header('Content-Type: text/html; charset=UTF-8');
+        echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>UpsertUser Failed - ID Missing</title>";
+        echo "<style>body{font-family:sans-serif;max-width:1200px;margin:20px auto;padding:20px;}code{background:#f5f5f5;padding:2px 6px;border-radius:3px;word-break:break-all;}.ng{color:red;font-weight:bold;}.info{background:#e8f4f8;padding:15px;border-radius:5px;margin:10px 0;}</style>";
+        echo "</head><body>";
+        echo "<h1 class='ng'>❌ ユーザー登録失敗（IDが返されませんでした）</h1>";
+        echo "<div class='info'>";
+        echo "<p><strong>返されたuser配列:</strong></p>";
+        echo "<pre>" . htmlspecialchars(print_r($user, true)) . "</pre>";
+        echo "<p><strong>ストレージタイプ:</strong> " . (get_class($storage)) . "</p>";
+        echo "</div>";
+        echo "<h2>デバッグ:</h2>";
+        echo "<p><a href='/auth/login?debug=1'>認可URLを確認する（/auth/login?debug=1）</a></p>";
+        echo "</body></html>";
+        exit;
+      } else {
+        render_error('認証に失敗しました（ユーザー登録失敗）');
+        return;
+      }
+    }
+  } catch (RuntimeException $e) {
+    error_log('upsertUser RuntimeException: ' . $e->getMessage());
+    if (!$isProd) {
+      // 開発環境: 詳細なエラー情報を表示
+      header('Content-Type: text/html; charset=UTF-8');
+      echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>UpsertUser Failed - RuntimeException</title>";
+      echo "<style>body{font-family:sans-serif;max-width:1200px;margin:20px auto;padding:20px;}code{background:#f5f5f5;padding:2px 6px;border-radius:3px;word-break:break-all;}.ng{color:red;font-weight:bold;}.info{background:#e8f4f8;padding:15px;border-radius:5px;margin:10px 0;}</style>";
+      echo "</head><body>";
+      echo "<h1 class='ng'>❌ ユーザー登録失敗（RuntimeException）</h1>";
+      echo "<div class='info'>";
+      echo "<p><strong>エラーメッセージ:</strong><br><code>" . htmlspecialchars($e->getMessage()) . "</code></p>";
+      echo "<p><strong>ファイル:</strong> " . htmlspecialchars($e->getFile()) . "</p>";
+      echo "<p><strong>行番号:</strong> " . $e->getLine() . "</p>";
+      echo "<p><strong>ストレージタイプ:</strong> " . (get_class($storage)) . "</p>";
+      if (strpos($e->getMessage(), 'DB接続失敗') !== false) {
+        echo "<p class='ng'><strong>⚠️ データベース接続エラーの可能性があります</strong></p>";
+        echo "<p>config.phpのDB設定を確認してください。</p>";
+      }
+      echo "</div>";
+      echo "<h2>スタックトレース:</h2>";
+      echo "<pre style='background:#f5f5f5;padding:10px;border-radius:5px;overflow-x:auto;'>" . htmlspecialchars($e->getTraceAsString()) . "</pre>";
+      echo "<h2>デバッグ:</h2>";
+      echo "<p><a href='/auth/login?debug=1'>認可URLを確認する（/auth/login?debug=1）</a></p>";
+      echo "</body></html>";
+      exit;
+    } else {
+      render_error('認証に失敗しました（ユーザー登録失敗）');
+      return;
+    }
+  } catch (PDOException $e) {
+    error_log('upsertUser PDOException: ' . $e->getMessage());
+    if (!$isProd) {
+      // 開発環境: 詳細なエラー情報を表示
+      header('Content-Type: text/html; charset=UTF-8');
+      echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>UpsertUser Failed - PDOException</title>";
+      echo "<style>body{font-family:sans-serif;max-width:1200px;margin:20px auto;padding:20px;}code{background:#f5f5f5;padding:2px 6px;border-radius:3px;word-break:break-all;}.ng{color:red;font-weight:bold;}.info{background:#e8f4f8;padding:15px;border-radius:5px;margin:10px 0;}</style>";
+      echo "</head><body>";
+      echo "<h1 class='ng'>❌ ユーザー登録失敗（PDOException）</h1>";
+      echo "<div class='info'>";
+      echo "<p><strong>エラーメッセージ:</strong><br><code>" . htmlspecialchars($e->getMessage()) . "</code></p>";
+      echo "<p><strong>SQLSTATE:</strong> " . htmlspecialchars($e->getCode()) . "</p>";
+      echo "<p><strong>ファイル:</strong> " . htmlspecialchars($e->getFile()) . "</p>";
+      echo "<p><strong>行番号:</strong> " . $e->getLine() . "</p>";
+      echo "<p><strong>ストレージタイプ:</strong> " . (get_class($storage)) . "</p>";
+      if (strpos($e->getMessage(), 'not allowed to connect') !== false) {
+        echo "<p class='ng'><strong>⚠️ データベース接続許可エラー</strong></p>";
+        echo "<p>データベースサーバーの設定で、このホストからの接続が許可されていない可能性があります。</p>";
+      }
+      echo "</div>";
+      echo "<h2>スタックトレース:</h2>";
+      echo "<pre style='background:#f5f5f5;padding:10px;border-radius:5px;overflow-x:auto;'>" . htmlspecialchars($e->getTraceAsString()) . "</pre>";
+      echo "<h2>デバッグ:</h2>";
+      echo "<p><a href='/auth/login?debug=1'>認可URLを確認する（/auth/login?debug=1）</a></p>";
+      echo "</body></html>";
+      exit;
+    } else {
+      render_error('認証に失敗しました（ユーザー登録失敗）');
+      return;
+    }
+  } catch (Exception $e) {
+    error_log('upsertUser Exception: ' . $e->getMessage());
+    if (!$isProd) {
+      // 開発環境: 詳細なエラー情報を表示
+      header('Content-Type: text/html; charset=UTF-8');
+      echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>UpsertUser Failed - Exception</title>";
+      echo "<style>body{font-family:sans-serif;max-width:1200px;margin:20px auto;padding:20px;}code{background:#f5f5f5;padding:2px 6px;border-radius:3px;word-break:break-all;}.ng{color:red;font-weight:bold;}.info{background:#e8f4f8;padding:15px;border-radius:5px;margin:10px 0;}</style>";
+      echo "</head><body>";
+      echo "<h1 class='ng'>❌ ユーザー登録失敗（Exception）</h1>";
+      echo "<div class='info'>";
+      echo "<p><strong>エラーメッセージ:</strong><br><code>" . htmlspecialchars($e->getMessage()) . "</code></p>";
+      echo "<p><strong>ファイル:</strong> " . htmlspecialchars($e->getFile()) . "</p>";
+      echo "<p><strong>行番号:</strong> " . $e->getLine() . "</p>";
+      echo "<p><strong>ストレージタイプ:</strong> " . (get_class($storage)) . "</p>";
+      echo "</div>";
+      echo "<h2>スタックトレース:</h2>";
+      echo "<pre style='background:#f5f5f5;padding:10px;border-radius:5px;overflow-x:auto;'>" . htmlspecialchars($e->getTraceAsString()) . "</pre>";
+      echo "<h2>デバッグ:</h2>";
+      echo "<p><a href='/auth/login?debug=1'>認可URLを確認する（/auth/login?debug=1）</a></p>";
+      echo "</body></html>";
+      exit;
+    } else {
+      render_error('認証に失敗しました（ユーザー登録失敗）');
+      return;
+    }
   }
   $userId = (int)$user['id'];
 
@@ -456,9 +647,16 @@ route('POST', '/groups/delete', function() use ($storage) {
 // Send flow
 route('GET', '/send', function() use ($storage) {
   $u=require_login($storage);
+  // idが存在することを再確認（念のため）
+  if (!isset($u['id'])) {
+    error_log('/send: user missing id after require_login');
+    header('Location: /auth/login?error=session_invalid');
+    exit;
+  }
+  $userId = (int)$u['id'];
   $template_id=(int)($_GET['template_id']??0);
-  $t=$template_id ? $storage->getTemplate($u['id'],$template_id) : null;
-  $groups=$storage->listGroups($u['id'],'');
+  $t=$template_id ? $storage->getTemplate($userId, $template_id) : null;
+  $groups=$storage->listGroups($userId, '');
   render_view('send/prepare', ['user'=>$u,'t'=>$t,'groups'=>$groups,'page'=>'send']);
 });
 route('POST', '/send/confirm', function() use ($storage, $config) {

@@ -160,8 +160,14 @@ final class MysqlStorage implements Storage {
     $this->config=$config;
     $this->pdo=db_pdo($config);
   }
-  private function requirePdo(): PDO {
-    if (!$this->pdo) throw new RuntimeException('DB接続失敗。configとテーブル作成を確認してください。');
+  private function requirePdo() {
+    if (!$this->pdo) {
+      $h = isset($this->config['DB_HOST']) ? $this->config['DB_HOST'] : '';
+      $d = isset($this->config['DB_NAME']) ? $this->config['DB_NAME'] : '';
+      $u = isset($this->config['DB_USER']) ? $this->config['DB_USER'] : '';
+      error_log('DB pdo is null. host=' . $h . ' db=' . $d . ' user=' . $u);
+      throw new RuntimeException('DB接続失敗。configとDB接続元許可を確認してください。');
+    }
     return $this->pdo;
   }
   public function getUser(): ?array { return isset($_SESSION['user']) ? $_SESSION['user'] : null; }
