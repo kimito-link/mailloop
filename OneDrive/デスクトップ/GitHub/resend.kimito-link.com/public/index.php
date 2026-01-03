@@ -91,8 +91,19 @@ function csrf_verify(): bool {
 }
 
 // Routes
-route('GET', '/', function() {
-  render_view('home', ['page' => 'home']);
+route('GET', '/', function() use ($storage) {
+  // ログイン状態を判定
+  $u = $storage->getUser();
+  $loggedIn = !empty($u);
+
+  if (!$loggedIn) {
+    header('Location: /auth/login');
+    exit;
+  }
+
+  // ログイン済みなら /send へ（/send ルートは既に存在）
+  header('Location: /send');
+  exit;
 });
 
 route('GET', '/auth/login', function() use ($config) {
@@ -365,6 +376,12 @@ route('POST', '/send/execute', function() use ($storage, $config) {
   $g=$storage->getGroup($u['id'],$group_id);
   if(!$t || !$g){ header('Location: /send'); exit; }
 
+  // send_attempt_id を生成（同一送信試行を識別するため、UUID v4形式）
+  $bytes = random_bytes(16);
+  $bytes[6] = chr(ord($bytes[6]) & 0x0f | 0x40); // version 4
+  $bytes[8] = chr(ord($bytes[8]) & 0x3f | 0x80); // variant
+  $sendAttemptId = vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($bytes), 4)); // UUID v4形式（36文字）
+
   // トークン取得（期限切れが近ければ自動refresh）
   require_once __DIR__ . '/../app/services/token_manager.php';
   try {
@@ -390,7 +407,10 @@ route('POST', '/send/execute', function() use ($storage, $config) {
     'body_text'=>$body,
   ];
 
-  // Gmail送信（401の場合は一度だけrefreshして再試行）
+  // 実行時間制限を延長（BCC100件など大量送信時）
+  set_time_limit(60);
+  
+  // Gmail送信（401の場合は一度だけrefreshして再試行、429/5xxは最大2回リトライ）
   [$sResp,$sData]=gmail_send_message($access, $mail);
   $httpCode = (int)($sResp['code'] ?? 0);
   
@@ -407,16 +427,92 @@ route('POST', '/send/execute', function() use ($storage, $config) {
     }
   }
   
+  // 403（権限不足）の場合は再試行不要、再認証へ誘導
+  if ($httpCode === 403) {
+    $status = 'failed';
+    $error = [
+      'http_code' => 403,
+      'google_error' => [
+        'message' => '権限が不足しています',
+        'status' => 'PERMISSION_DENIED',
+      ],
+      'when' => date('c'),
+    ];
+    // 送信先の件数を計算
+    $toCount = count($to);
+    $ccCount = count($cc);
+    $bccCount = count($bcc);
+    $totalCount = $toCount + $ccCount + $bccCount;
+    
+    $logId = $storage->upsertLogByAttempt($u['id'], [
+      'send_attempt_id'=>$sendAttemptId,
+      'template_id'=>$template_id,
+      'group_id'=>$group_id,
+      'subject_snapshot'=>$subject,
+      'body_snapshot'=>$body,
+      'attachments_snapshot'=>[],
+      'counts'=>['to'=>$toCount,'cc'=>$ccCount,'bcc'=>$bccCount,'total'=>$totalCount],
+      'status'=>$status,
+      'error'=>$error,
+      'gmail_message_id'=>null,
+    ]);
+    render_error('権限が不足しています。再ログインしてください。');
+    return;
+  }
+  
+  // 429（レート制限）または5xx（サーバーエラー）の場合は最大2回リトライ
+  $retryCount = 0;
+  $maxRetries = 2;
+  while (($httpCode === 429 || ($httpCode >= 500 && $httpCode < 600)) && $retryCount < $maxRetries) {
+    sleep($retryCount + 1); // 1秒、2秒
+    [$sResp,$sData]=gmail_send_message($access, $mail);
+    $httpCode = (int)($sResp['code'] ?? 0);
+    $retryCount++;
+  }
+  
   $status = ($httpCode === 200) ? 'success' : 'failed';
-  $error = $status==='failed' ? ['code'=>$sResp['code'],'curl_error'=>$sResp['error'],'body'=>$sResp['body']] : null;
-
-  $logId = $storage->createLog($u['id'], [
+  
+  // error_json を構造化・短縮（PIIを避ける）
+  $error = null;
+  if ($status === 'failed') {
+    $errorBody = $sResp['body'] ?? '';
+    $errorBodyShort = mb_substr($errorBody, 0, 2000); // 最大2000文字
+    $errorData = json_decode($errorBodyShort, true);
+    
+    $error = [
+      'http_code' => $sResp['code'] ?? 0,
+      'curl_error' => $sResp['error'] ?? null,
+    ];
+    
+    // Google APIのエラー情報を抽出
+    if (is_array($errorData) && isset($errorData['error'])) {
+      $error['google_error'] = [
+        'message' => $errorData['error']['message'] ?? null,
+        'status' => $errorData['error']['status'] ?? null,
+        'reason' => $errorData['error']['errors'][0]['reason'] ?? null,
+      ];
+    } else {
+      $error['body_preview'] = $errorBodyShort;
+    }
+    
+    $error['when'] = date('c'); // ISO 8601形式
+  }
+  
+  // 送信先の件数を計算（totalも含める）
+  $toCount = count($to);
+  $ccCount = count($cc);
+  $bccCount = count($bcc);
+  $totalCount = $toCount + $ccCount + $bccCount;
+  
+  // send_attempt_id を使ってログを upsert（同一送信試行は1行にまとめる）
+  $logId = $storage->upsertLogByAttempt($u['id'], [
+    'send_attempt_id'=>$sendAttemptId,
     'template_id'=>$template_id,
     'group_id'=>$group_id,
     'subject_snapshot'=>$subject,
     'body_snapshot'=>$body,
     'attachments_snapshot'=>[],
-    'counts'=>['to'=>count($to),'cc'=>count($cc),'bcc'=>count($bcc)],
+    'counts'=>['to'=>$toCount,'cc'=>$ccCount,'bcc'=>$bccCount,'total'=>$totalCount],
     'status'=>$status,
     'error'=>$error,
     'gmail_message_id'=>$sData['id'] ?? null,
