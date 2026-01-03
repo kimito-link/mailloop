@@ -109,13 +109,8 @@ function oauth_verify_state($config, $state, $server, &$errMsg = null) {
 }
 
 function google_auth_url($config, $state) {
-  // ?? 演算子が使えない古いPHP対応
-  $scopes = '';
-  if (isset($config['GOOGLE_SCOPES'])) $scopes .= $config['GOOGLE_SCOPES'];
-  if (isset($config['GMAIL_SCOPE'])) $scopes .= ' ' . $config['GMAIL_SCOPE'];
-  $scopes = trim($scopes);
+  $scopes = trim($config['GOOGLE_SCOPES'] . ' ' . $config['GMAIL_SCOPE']);
 
-  // 互換性重視のクエリ組み立て（PHP古め対策）
   $params = array(
     'client_id' => $config['GOOGLE_CLIENT_ID'],
     'redirect_uri' => $config['GOOGLE_REDIRECT_URI'],
@@ -126,6 +121,7 @@ function google_auth_url($config, $state) {
     'state' => $state,
   );
 
+  // 互換性重視のクエリ組み立て（PHP古め対策）
   $pairs = array();
   foreach ($params as $k => $v) {
     if ($v === null) continue;
@@ -137,7 +133,7 @@ function google_auth_url($config, $state) {
 
   // ★ 最終保険：stateが見つからなければ強制付与
   if (strpos($url, 'state=') === false) {
-    $url .= '&state=' . rawurlencode((string)$state);
+    $url .= '&state=' . rawurlencode($state);
     if (function_exists('app_log')) {
       app_log('WARNING: google_auth_url() state was missing, forced to add');
     } else {
