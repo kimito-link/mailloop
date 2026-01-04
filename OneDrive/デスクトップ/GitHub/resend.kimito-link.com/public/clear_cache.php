@@ -1,4 +1,28 @@
 <?php
+require_once __DIR__ . '/../app/bootstrap.php';
+$env = $config['APP_ENV'] ?? 'dev';
+if ($env === 'prod') { http_response_code(403); exit; }
+
+header('Content-Type: text/plain; charset=UTF-8');
+echo "OK CLEAR CACHE\n";
+echo "timestamp: " . date('c') . "\n";
+echo "__FILE__: " . __FILE__ . "\n";
+echo "realpath(__FILE__): " . realpath(__FILE__) . "\n";
+
+if (function_exists('opcache_reset')) {
+  $r = opcache_reset();
+  echo "opcache_reset: " . ($r ? "OK" : "FAILED") . "\n";
+} else {
+  echo "opcache_reset: not available\n";
+}
+
+if (function_exists('apcu_clear_cache')) {
+  apcu_clear_cache();
+  echo "apcu_clear_cache: OK\n";
+}
+
+echo "Reload this page a few times if multiple PHP workers exist.\n";
+<?php
 // OPcacheクリア用スクリプト
 header('Content-Type: text/plain; charset=UTF-8');
 
