@@ -51,7 +51,12 @@ final class FileStorage implements Storage {
   private function write(string $name, $data): void {
     file_put_contents($this->path($name), json_encode($data, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
   }
-  public function getUser(): ?array { return isset($_SESSION['user']) ? $_SESSION['user'] : null; }
+  public function getUser(): ?array {
+    if (!isset($_SESSION['user']) || !is_array($_SESSION['user'])) return null;
+    // idが無い場合は無効なセッションとして扱う
+    if (!isset($_SESSION['user']['id'])) return null;
+    return $_SESSION['user'];
+  }
   public function upsertUser(array $u): array {
     // idが未設定の場合は1を設定（FileStorageでは固定ID）
     if (!isset($u['id'])) {
@@ -170,7 +175,11 @@ final class MysqlStorage implements Storage {
     }
     return $this->pdo;
   }
-  public function getUser(): ?array { return isset($_SESSION['user']) ? $_SESSION['user'] : null; }
+  public function getUser(): ?array {
+    if (!isset($_SESSION['user']) || !is_array($_SESSION['user'])) return null;
+    if (!isset($_SESSION['user']['id'])) return null;
+    return $_SESSION['user'];
+  }
   public function upsertUser(array $u): array {
     $pdo = $this->requirePdo();
 
