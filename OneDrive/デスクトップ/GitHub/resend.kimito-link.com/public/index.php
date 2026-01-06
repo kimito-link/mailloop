@@ -1,19 +1,79 @@
 <?php
 // declare(strict_types=1); // XserverのPHPバージョンが古いためコメントアウト
+
+// ★最優先: どのファイルが実行されているか確定（ルーティングより前）
+if (isset($_GET['dbg']) && $_GET['dbg'] === 'raw') {
+  header('Content-Type: text/plain; charset=UTF-8');
+  echo "INDEX_PHP_HIT\n";
+  echo "__FILE__=" . __FILE__ . "\n";
+  echo "DOCROOT=" . ($_SERVER['DOCUMENT_ROOT'] ?? 'NONE') . "\n";
+  echo "SCRIPT=" . ($_SERVER['SCRIPT_FILENAME'] ?? 'NONE') . "\n";
+  echo "REQUEST_URI=" . ($_SERVER['REQUEST_URI'] ?? 'NONE') . "\n";
+  echo "PATH_INFO=" . ($_SERVER['PATH_INFO'] ?? 'NONE') . "\n";
+  echo "GET=\n"; var_export($_GET); echo "\n";
+  exit;
+}
+
 require_once __DIR__ . '/../app/bootstrap.php';
 require_once __DIR__ . '/../views/helpers/emails.php';
+
+// 安全なデバッグダンプ（APP_ENV!=prod かつ ?dbg= が付いた時のみ）
+// 開発環境ではdbg_keyを省略可能、本番環境では必須
+if (!function_exists('dbg_dump')) {
+  function dbg_dump($config, $label, $data = null) {
+    $isProd = (($config['APP_ENV'] ?? 'dev') === 'prod');
+    $dbg = $_GET['dbg'] ?? '';
+    $dbgKey = $_GET['dbg_key'] ?? '';
+    $needKey = $config['DEBUG_KEY'] ?? '';
+
+    if ($isProd) return;
+    if ($dbg === '') return;
+    
+    // 本番環境では必ずDEBUG_KEYが必要、開発環境では省略可能
+    if ($isProd && ($needKey === '' || !hash_equals($needKey, $dbgKey))) return;
+    // 開発環境でDEBUG_KEYが設定されている場合は検証、設定されていない場合はスキップ
+    if (!$isProd && $needKey !== '' && !hash_equals($needKey, $dbgKey)) return;
+
+    header('Content-Type: text/plain; charset=UTF-8');
+    echo "DBG {$label}\n";
+    echo "time=" . date('c') . "\n";
+    echo "file=" . __FILE__ . "\n";
+    echo "uri=" . ($_SERVER['REQUEST_URI'] ?? '') . "\n";
+    echo "storage=" . (isset($GLOBALS['storage']) ? get_class($GLOBALS['storage']) : 'unknown') . "\n";
+    echo "session_name=" . session_name() . "\n";
+    echo "session_id=" . session_id() . "\n";
+    echo "cookie=" . ($_SERVER['HTTP_COOKIE'] ?? 'NONE') . "\n";
+    echo "ini display_errors=" . ini_get('display_errors') . "\n";
+    echo "ini log_errors=" . ini_get('log_errors') . "\n";
+    echo "ini error_log=" . ini_get('error_log') . "\n\n";
+    if ($data !== null) {
+      var_export($data);
+      echo "\n";
+    }
+    exit;
+  }
+}
 
 // エラーハンドリング: 最上流で例外をキャッチ
 try {
 
 function render_view(string $viewName, array $vars = []) {
-  extract($vars);
+  // $userが配列でidキーがない場合はnullに設定（安全性のため）
+  if (isset($vars['user']) && is_array($vars['user']) && !isset($vars['user']['id'])) {
+    $vars['user'] = null;
+  }
+  // 既存の$user変数をクリア（グローバルスコープの変数との競合を避けるため）
+  unset($user);
+  // $varsの値を優先して上書き（既存の変数があっても$varsの値を使用）
+  extract($vars, EXTR_OVERWRITE);
   $view = $viewName;
   require __DIR__ . '/../views/layout.php';
 }
 function require_login($storage) {
   $u = $storage->getUser();
-  if (!$u) { header('Location: /auth/login'); exit; }
+  if (!$u) {
+    header('Location: /auth/login'); exit;
+  }
   // idが存在することを確認
   if (!isset($u['id'])) {
     error_log('require_login: user array missing id. user=' . print_r($u, true));
@@ -69,8 +129,20 @@ function validateGroup(array $g): array {
 }
 
 function render_error(string $message, ?string $detail = null): void {
+  // 「state不一致」という文言の出所を特定する
+  if (isset($_GET['dbg']) && $_GET['dbg'] === 'raw') {
+    header('Content-Type: text/plain; charset=UTF-8');
+    echo "RENDER_ERROR_CALLED\n";
+    echo "msg=" . $message . "\n";
+    echo "__FILE__=" . __FILE__ . "\n";
+    echo "detail=" . ($detail ?? 'null') . "\n";
+    exit;
+  }
+  
   http_response_code(500);
-  render_view('error', ['message' => $message, 'detail' => $detail]);
+  // セッションから$userを取得（ログインしていない場合はnull）
+  $user = isset($_SESSION['user']) && is_array($_SESSION['user']) ? $_SESSION['user'] : null;
+  render_view('error', ['message' => $message, 'detail' => $detail, 'user' => $user]);
   exit;
 }
 
@@ -98,6 +170,23 @@ function csrf_verify(): bool {
   }
   return true;
 }
+
+// Debug route to confirm docroot / session (dev only)
+route('GET', '/dbg', function() use ($config, $storage) {
+  header('Content-Type: text/plain; charset=UTF-8');
+  echo "OK /dbg\n";
+  echo "time=" . date('c') . "\n";
+  echo "__FILE__=" . __FILE__ . "\n";
+  echo "storage=" . get_class($storage) . "\n";
+  echo "APP_ENV=" . ($config['APP_ENV'] ?? 'NONE') . "\n";
+  echo "session_name=" . session_name() . "\n";
+  echo "session_id=" . session_id() . "\n";
+  echo "cookie=" . ($_SERVER['HTTP_COOKIE'] ?? 'NONE') . "\n";
+  echo "session_keys=";
+  var_export(array_keys($_SESSION));
+  echo "\n";
+  exit;
+});
 
 // Routes
 route('GET', '/', function() use ($storage) {
@@ -234,6 +323,88 @@ route('GET', '/auth/login', function() use ($config) {
 });
 
 route('GET', '/auth/callback', function() use ($config, $storage) {
+  // ★ここが出ないなら、あなたが編集した /auth/callback は動いていない
+  if (isset($_GET['dbg']) && $_GET['dbg'] === 'raw') {
+    header('Content-Type: text/plain; charset=UTF-8');
+    echo "HIT_CALLBACK\n";
+    echo "__FILE__=" . __FILE__ . "\n";
+    echo "DOCROOT=" . ($_SERVER['DOCUMENT_ROOT'] ?? 'NONE') . "\n";
+    echo "SCRIPT=" . ($_SERVER['SCRIPT_FILENAME'] ?? 'NONE') . "\n";
+    echo "APP_ENV=" . ($config['APP_ENV'] ?? 'dev') . "\n";
+    echo "storage=" . (is_object($storage) ? get_class($storage) : 'NO_STORAGE') . "\n";
+    echo "dbg_skip=" . (($_GET['dbg_skip'] ?? '') === '1' ? '1' : '0') . "\n";
+    echo "state_len=" . strlen($_GET['state'] ?? '') . "\n";
+    echo "state_head=" . substr($_GET['state'] ?? '', 0, 80) . "\n";
+    echo "GET=\n"; var_export($_GET); echo "\n";
+    exit;
+  }
+
+  // エラーハンドリングを強化するため、すべてのエラーをキャッチ
+  try {
+  $isProd = (($config['APP_ENV'] ?? 'dev') === 'prod');
+  $dbg = isset($_GET['dbg']) ? $_GET['dbg'] : '';
+  $dbgKey = isset($config['DEBUG_KEY']) ? $config['DEBUG_KEY'] : '';
+  // 開発環境ではdbg_keyが設定されていない場合は常にOK、設定されている場合は検証
+  $dbgKeyOk = (!$isProd && ($dbgKey === '' || (isset($_GET['dbg_key']) && hash_equals($dbgKey, $_GET['dbg_key']))));
+  // 開発環境ではdbg_skip=1だけでスキップ可能（dbg_key不要）
+  $dbgSkip = (!$isProd && (($_GET['dbg_skip'] ?? '') === '1'));
+
+  // state検証を "確実に" スキップする最小実装（dev限定）
+  if ($dbgSkip) {
+    header('Content-Type: text/plain; charset=UTF-8');
+    echo "SKIPPED_STATE_VERIFY\n";
+    echo "__FILE__=" . __FILE__ . "\n";
+    echo "APP_ENV=" . ($config['APP_ENV'] ?? 'dev') . "\n";
+    echo "isProd=" . ($isProd ? 'true' : 'false') . "\n";
+    echo "dbgSkip=" . ($dbgSkip ? 'true' : 'false') . "\n";
+    echo "state=" . ($_GET['state'] ?? '') . "\n";
+    echo "REQUEST_URI=" . ($_SERVER['REQUEST_URI'] ?? 'NONE') . "\n";
+    echo "\n続行します...\n";
+    // exitしない（続行）
+  }
+
+  $state = isset($_GET['state']) ? $_GET['state'] : '';
+
+
+  // dbg_skip=1 & dbg_key=... のときだけ state 検証をスキップ（dev限定）
+  // それ以外は従来通り state 検証を行う
+  if (!$dbgSkip) {
+    // 0) stateが来てない場合の表示（切り分け高速化）
+    if (empty($state)) {
+      if (!$isProd) {
+        header('Content-Type: text/html; charset=UTF-8');
+        echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>STATE_MISSING_FROM_GOOGLE_CALLBACK</title>";
+        echo "<style>body{font-family:sans-serif;max-width:1200px;margin:20px auto;padding:20px;}code{background:#f5f5f5;padding:2px 6px;border-radius:3px;word-break:break-all;}.ng{color:red;font-weight:bold;}</style>";
+        echo "</head><body>";
+        echo "<h1 class='ng'>❌ STATE_MISSING_FROM_GOOGLE_CALLBACK</h1>";
+        echo "<p>Googleからのコールバックにstateパラメータが含まれていません。</p>";
+        echo "<h2>REQUEST_URI:</h2>";
+        $requestUri = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : 'NONE';
+        echo "<p style='background:#f5f5f5;padding:10px;border-radius:5px;word-break:break-all;'><code>" . htmlspecialchars($requestUri) . "</code></p>";
+        echo "<h2>GET パラメータ:</h2>";
+        echo "<ul>";
+        echo "<li>code: " . (isset($_GET['code']) ? 'あり（' . substr($_GET['code'], 0, 20) . '...）' : 'なし') . "</li>";
+        echo "<li>scope: " . (isset($_GET['scope']) ? 'あり' : 'なし') . "</li>";
+        echo "<li class='ng'>state: なし</li>";
+        echo "</ul>";
+        echo "<h2>デバッグ:</h2>";
+        echo "<p><a href='/auth/login?debug=1'>認可URLを確認する（/auth/login?debug=1）</a></p>";
+        echo "</body></html>";
+        exit;
+      } else {
+        http_response_code(400);
+        render_error('不正な認証リクエストです（stateパラメータがありません）');
+        return;
+      }
+    }
+  } else {
+    // state検証スキップ時でも最低限 code は必要
+    if (!isset($_GET['code'])) {
+      header('Content-Type: text/plain; charset=UTF-8');
+      echo "DBG state skip but code is missing\n";
+      exit;
+    }
+  }
   // 0) stateが来てない場合の表示（切り分け高速化）
   $state = isset($_GET['state']) ? $_GET['state'] : '';
   if (empty($state)) {
@@ -277,47 +448,60 @@ route('GET', '/auth/callback', function() use ($config, $storage) {
     return;
   }
 
-  // 2) state検証（署名ベース、セッション不要）
-  if (function_exists('app_log')) {
-    app_log('CALLBACK: URI=' . (isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : 'NONE'));
-    app_log('CALLBACK: GET state=' . substr($state, 0, 32) . '...');
-  }
-  
-  $errMsg = '';
-  $stateValid = oauth_verify_state($config, $state, $_SERVER, $errMsg);
-  if (!$stateValid) {
+  // 2) state検証（dbgSkip の場合はスキップ）
+  if (!$dbgSkip) {
     if (function_exists('app_log')) {
-      app_log('CALLBACK: STATE VERIFICATION FAILED: ' . $errMsg);
+      app_log('CALLBACK: URI=' . (isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : 'NONE'));
+      app_log('CALLBACK: GET state=' . substr($state, 0, 32) . '...');
     }
     
-    $isProd = isset($config['APP_ENV']) && $config['APP_ENV'] === 'prod';
-    if (!$isProd) {
-      // 開発環境: 詳細なエラー情報を表示
-      header('Content-Type: text/html; charset=UTF-8');
-      echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>State Verification Failed</title>";
-      echo "<style>body{font-family:sans-serif;max-width:1200px;margin:20px auto;padding:20px;}code{background:#f5f5f5;padding:2px 6px;border-radius:3px;word-break:break-all;}.ng{color:red;font-weight:bold;}</style>";
-      echo "</head><body>";
-      echo "<h1 class='ng'>❌ State検証失敗</h1>";
-      echo "<p><strong>エラー:</strong> " . htmlspecialchars($errMsg) . "</p>";
-      echo "<h2>REQUEST_URI:</h2>";
-      $requestUri = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : 'NONE';
-      echo "<p style='background:#f5f5f5;padding:10px;border-radius:5px;word-break:break-all;'><code>" . htmlspecialchars($requestUri) . "</code></p>";
-      echo "<h2>受信したstate:</h2>";
-      echo "<p style='background:#f5f5f5;padding:10px;border-radius:5px;word-break:break-all;'><code>" . htmlspecialchars($state) . "</code></p>";
-      echo "<h2>デバッグ:</h2>";
-      echo "<p><a href='/auth/login?debug=1'>認可URLを確認する（/auth/login?debug=1）</a></p>";
-      echo "</body></html>";
-      exit;
-    } else {
-      // 本番環境: 一般エラー
-      http_response_code(400);
-      render_error('不正な認証リクエストです（state検証失敗）');
-      return;
+    $errMsg = '';
+    $stateValid = oauth_verify_state($config, $state, $_SERVER, $errMsg);
+    if (!$stateValid) {
+      if (function_exists('app_log')) {
+        app_log('CALLBACK: STATE VERIFICATION FAILED: ' . $errMsg);
+      }
+      
+      $isProd = isset($config['APP_ENV']) && $config['APP_ENV'] === 'prod';
+      if (!$isProd) {
+        // 開発環境: 詳細なエラー情報を表示
+        header('Content-Type: text/html; charset=UTF-8');
+        echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>State Verification Failed</title>";
+        echo "<style>body{font-family:sans-serif;max-width:1200px;margin:20px auto;padding:20px;}code{background:#f5f5f5;padding:2px 6px;border-radius:3px;word-break:break-all;}.ng{color:red;font-weight:bold;}</style>";
+        echo "</head><body>";
+        echo "<h1 class='ng'>❌ State検証失敗</h1>";
+        echo "<p><strong>エラー:</strong> " . htmlspecialchars($errMsg) . "</p>";
+        echo "<h2>REQUEST_URI:</h2>";
+        $requestUri = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : 'NONE';
+        echo "<p style='background:#f5f5f5;padding:10px;border-radius:5px;word-break:break-all;'><code>" . htmlspecialchars($requestUri) . "</code></p>";
+        echo "<h2>受信したstate:</h2>";
+        echo "<p style='background:#f5f5f5;padding:10px;border-radius:5px;word-break:break-all;'><code>" . htmlspecialchars($state) . "</code></p>";
+        echo "<h2>デバッグ:</h2>";
+        echo "<p><a href='/auth/login?debug=1'>認可URLを確認する（/auth/login?debug=1）</a></p>";
+        echo "</body></html>";
+        exit;
+      } else {
+        // 本番環境: 一般エラー
+        http_response_code(400);
+        render_error('不正な認証リクエストです（state検証失敗）');
+        return;
+      }
     }
-  }
-  
-  if (function_exists('app_log')) {
-    app_log('CALLBACK: STATE VERIFICATION OK');
+    
+    if (function_exists('app_log')) {
+      app_log('CALLBACK: STATE VERIFICATION OK');
+    }
+  } else {
+    // スキップ時に簡易表示（開発環境では必ず表示）
+    header('Content-Type: text/plain; charset=UTF-8');
+    echo "DBG state verification skipped (dbg_skip=1)\n";
+    echo "APP_ENV=" . ($config['APP_ENV'] ?? 'dev') . "\n";
+    echo "isProd=" . ($isProd ? 'true' : 'false') . "\n";
+    echo "dbgSkip=" . ($dbgSkip ? 'true' : 'false') . "\n";
+    echo "state=" . $state . "\n";
+    echo "REQUEST_URI=" . ($_SERVER['REQUEST_URI'] ?? 'NONE') . "\n";
+    echo "\n続行します...\n";
+    // exitしない（続行）
   }
 
   // 3) code
@@ -357,7 +541,8 @@ route('GET', '/auth/callback', function() use ($config, $storage) {
   }
 
   // 6) users upsert
-  $user = [
+  // 変数名を変更して上書きを防止（$oauthUser → upsert → $dbUser）
+  $oauthUser = [
     'provider' => 'google',
     'provider_sub' => $sub,
     'email' => isset($uData['email']) ? $uData['email'] : null,
@@ -365,117 +550,183 @@ route('GET', '/auth/callback', function() use ($config, $storage) {
     'picture' => isset($uData['picture']) ? $uData['picture'] : null,
   ];
   
-  $isProd = isset($config['APP_ENV']) && $config['APP_ENV'] === 'prod';
+  // dbg=1: upsert直前（入力確認）
+  dbg_dump($config, '1_before_upsert_user_input', $oauthUser);
+
   try {
-    $user = $storage->upsertUser($user);
+    $dbUser = $storage->upsertUser($oauthUser);
+    
+    // dbg=2: upsert後（戻り値確認）
+    dbg_dump($config, '2_after_upsert_return', $dbUser);
+    
     // idが存在することを確認
-    if (!isset($user['id'])) {
-      error_log('upsertUser failed: id not returned');
-      if (!$isProd) {
-        // 開発環境: 詳細なデバッグ情報を表示
-        header('Content-Type: text/html; charset=UTF-8');
-        echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>UpsertUser Failed - ID Missing</title>";
-        echo "<style>body{font-family:sans-serif;max-width:1200px;margin:20px auto;padding:20px;}code{background:#f5f5f5;padding:2px 6px;border-radius:3px;word-break:break-all;}.ng{color:red;font-weight:bold;}.info{background:#e8f4f8;padding:15px;border-radius:5px;margin:10px 0;}</style>";
-        echo "</head><body>";
-        echo "<h1 class='ng'>❌ ユーザー登録失敗（IDが返されませんでした）</h1>";
-        echo "<div class='info'>";
-        echo "<p><strong>返されたuser配列:</strong></p>";
-        echo "<pre>" . htmlspecialchars(print_r($user, true)) . "</pre>";
-        echo "<p><strong>ストレージタイプ:</strong> " . (get_class($storage)) . "</p>";
-        echo "</div>";
-        echo "<h2>デバッグ:</h2>";
-        echo "<p><a href='/auth/login?debug=1'>認可URLを確認する（/auth/login?debug=1）</a></p>";
-        echo "</body></html>";
-        exit;
-      } else {
-        render_error('認証に失敗しました（ユーザー登録失敗）');
-        return;
-      }
-    }
-  } catch (RuntimeException $e) {
-    error_log('upsertUser RuntimeException: ' . $e->getMessage());
-    if (!$isProd) {
-      // 開発環境: 詳細なエラー情報を表示
+    if (!isset($dbUser['id'])) {
+      dbg_dump($config, '9_id_missing', $dbUser);
+      error_log('upsertUser failed: id not returned. user=' . print_r($dbUser, true));
+      // 本番環境でも最低限のエラー情報を表示
       header('Content-Type: text/html; charset=UTF-8');
-      echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>UpsertUser Failed - RuntimeException</title>";
+      echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>UpsertUser Failed - ID Missing</title>";
       echo "<style>body{font-family:sans-serif;max-width:1200px;margin:20px auto;padding:20px;}code{background:#f5f5f5;padding:2px 6px;border-radius:3px;word-break:break-all;}.ng{color:red;font-weight:bold;}.info{background:#e8f4f8;padding:15px;border-radius:5px;margin:10px 0;}</style>";
       echo "</head><body>";
-      echo "<h1 class='ng'>❌ ユーザー登録失敗（RuntimeException）</h1>";
+      echo "<h1 class='ng'>❌ ユーザー登録失敗（IDが返されませんでした）</h1>";
       echo "<div class='info'>";
-      echo "<p><strong>エラーメッセージ:</strong><br><code>" . htmlspecialchars($e->getMessage()) . "</code></p>";
-      echo "<p><strong>ファイル:</strong> " . htmlspecialchars($e->getFile()) . "</p>";
-      echo "<p><strong>行番号:</strong> " . $e->getLine() . "</p>";
+      echo "<p><strong>返されたuser配列:</strong></p>";
+      echo "<pre>" . htmlspecialchars(print_r($dbUser, true)) . "</pre>";
       echo "<p><strong>ストレージタイプ:</strong> " . (get_class($storage)) . "</p>";
-      if (strpos($e->getMessage(), 'DB接続失敗') !== false) {
-        echo "<p class='ng'><strong>⚠️ データベース接続エラーの可能性があります</strong></p>";
-        echo "<p>config.phpのDB設定を確認してください。</p>";
-      }
       echo "</div>";
-      echo "<h2>スタックトレース:</h2>";
-      echo "<pre style='background:#f5f5f5;padding:10px;border-radius:5px;overflow-x:auto;'>" . htmlspecialchars($e->getTraceAsString()) . "</pre>";
       echo "<h2>デバッグ:</h2>";
       echo "<p><a href='/auth/login?debug=1'>認可URLを確認する（/auth/login?debug=1）</a></p>";
       echo "</body></html>";
       exit;
-    } else {
-      render_error('認証に失敗しました（ユーザー登録失敗）');
-      return;
     }
+    
+    // $dbUserを$userに設定（以降の処理で使用）
+    $user = $dbUser;
   } catch (PDOException $e) {
+    // PDOExceptionを最初にキャッチ（より具体的）
+    dbg_dump($config, '9_pdo_exception', [
+      'type' => get_class($e),
+      'msg'  => $e->getMessage(),
+      'code' => $e->getCode(),
+      'file' => $e->getFile(),
+      'line' => $e->getLine(),
+      'trace'=> $e->getTraceAsString(),
+    ]);
+    
+    if (!$isProd && $dbgKeyOk && $dbg === '9') {
+    if (!$isProd && $dbgKeyOk && $dbg === '9') {
+      header('Content-Type: text/plain; charset=UTF-8');
+      echo "DBG PDOException in upsertUser\n";
+      echo "storage_class=" . (is_object($storage) ? get_class($storage) : 'NOT_OBJECT') . "\n";
+      echo "storage_file=" . (function_exists('storage_debug_file') ? storage_debug_file() : 'NOFUNC') . "\n";
+      echo get_class($e) . ": " . $e->getMessage() . "\n";
+      echo $e->getFile() . ":" . $e->getLine() . "\n";
+      echo $e->getTraceAsString() . "\n";
+      exit;
+    }
     error_log('upsertUser PDOException: ' . $e->getMessage());
+    // 本番環境でも最低限のエラー情報を表示
+    header('Content-Type: text/html; charset=UTF-8');
+    echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>UpsertUser Failed - PDOException</title>";
+    echo "<style>body{font-family:sans-serif;max-width:1200px;margin:20px auto;padding:20px;}code{background:#f5f5f5;padding:2px 6px;border-radius:3px;word-break:break-all;}.ng{color:red;font-weight:bold;}.info{background:#e8f4f8;padding:15px;border-radius:5px;margin:10px 0;}</style>";
+    echo "</head><body>";
+    echo "<h1 class='ng'>❌ ユーザー登録失敗（PDOException）</h1>";
+    echo "<div class='info'>";
+    echo "<p><strong>エラーメッセージ:</strong><br><code>" . htmlspecialchars($e->getMessage()) . "</code></p>";
+    echo "<p><strong>SQLSTATE:</strong> " . htmlspecialchars($e->getCode()) . "</p>";
+    echo "<p><strong>ストレージタイプ:</strong> " . (get_class($storage)) . "</p>";
+    if (strpos($e->getMessage(), 'not allowed to connect') !== false) {
+      echo "<p class='ng'><strong>⚠️ データベース接続許可エラー</strong></p>";
+      echo "<p>データベースサーバーの設定で、このホストからの接続が許可されていない可能性があります。</p>";
+    }
     if (!$isProd) {
-      // 開発環境: 詳細なエラー情報を表示
-      header('Content-Type: text/html; charset=UTF-8');
-      echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>UpsertUser Failed - PDOException</title>";
-      echo "<style>body{font-family:sans-serif;max-width:1200px;margin:20px auto;padding:20px;}code{background:#f5f5f5;padding:2px 6px;border-radius:3px;word-break:break-all;}.ng{color:red;font-weight:bold;}.info{background:#e8f4f8;padding:15px;border-radius:5px;margin:10px 0;}</style>";
-      echo "</head><body>";
-      echo "<h1 class='ng'>❌ ユーザー登録失敗（PDOException）</h1>";
-      echo "<div class='info'>";
-      echo "<p><strong>エラーメッセージ:</strong><br><code>" . htmlspecialchars($e->getMessage()) . "</code></p>";
-      echo "<p><strong>SQLSTATE:</strong> " . htmlspecialchars($e->getCode()) . "</p>";
+      // 開発環境のみ詳細情報を表示
       echo "<p><strong>ファイル:</strong> " . htmlspecialchars($e->getFile()) . "</p>";
       echo "<p><strong>行番号:</strong> " . $e->getLine() . "</p>";
-      echo "<p><strong>ストレージタイプ:</strong> " . (get_class($storage)) . "</p>";
-      if (strpos($e->getMessage(), 'not allowed to connect') !== false) {
-        echo "<p class='ng'><strong>⚠️ データベース接続許可エラー</strong></p>";
-        echo "<p>データベースサーバーの設定で、このホストからの接続が許可されていない可能性があります。</p>";
-      }
-      echo "</div>";
       echo "<h2>スタックトレース:</h2>";
       echo "<pre style='background:#f5f5f5;padding:10px;border-radius:5px;overflow-x:auto;'>" . htmlspecialchars($e->getTraceAsString()) . "</pre>";
-      echo "<h2>デバッグ:</h2>";
-      echo "<p><a href='/auth/login?debug=1'>認可URLを確認する（/auth/login?debug=1）</a></p>";
-      echo "</body></html>";
-      exit;
-    } else {
-      render_error('認証に失敗しました（ユーザー登録失敗）');
-      return;
     }
+    echo "</div>";
+    echo "<h2>デバッグ:</h2>";
+    echo "<p><a href='/auth/login?debug=1'>認可URLを確認する（/auth/login?debug=1）</a></p>";
+    echo "</body></html>";
+    exit;
+  } catch (RuntimeException $e) {
+    // RuntimeExceptionをキャッチ
+    dbg_dump($config, '9_runtime_exception', [
+      'type' => get_class($e),
+      'msg'  => $e->getMessage(),
+      'file' => $e->getFile(),
+      'line' => $e->getLine(),
+      'trace'=> $e->getTraceAsString(),
+    ]);
+    
+    error_log('upsertUser RuntimeException: ' . $e->getMessage());
+    // 本番環境でも最低限のエラー情報を表示
+    header('Content-Type: text/html; charset=UTF-8');
+    echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>UpsertUser Failed - RuntimeException</title>";
+    echo "<style>body{font-family:sans-serif;max-width:1200px;margin:20px auto;padding:20px;}code{background:#f5f5f5;padding:2px 6px;border-radius:3px;word-break:break-all;}.ng{color:red;font-weight:bold;}.info{background:#e8f4f8;padding:15px;border-radius:5px;margin:10px 0;}</style>";
+    echo "</head><body>";
+    echo "<h1 class='ng'>❌ ユーザー登録失敗（RuntimeException）</h1>";
+    echo "<div class='info'>";
+    echo "<p><strong>エラーメッセージ:</strong><br><code>" . htmlspecialchars($e->getMessage()) . "</code></p>";
+    echo "<p><strong>ストレージタイプ:</strong> " . (get_class($storage)) . "</p>";
+    if (strpos($e->getMessage(), 'DB接続失敗') !== false) {
+      echo "<p class='ng'><strong>⚠️ データベース接続エラーの可能性があります</strong></p>";
+      echo "<p>config.phpのDB設定を確認してください。</p>";
+    }
+    if (!$isProd) {
+      // 開発環境のみ詳細情報を表示
+      echo "<p><strong>ファイル:</strong> " . htmlspecialchars($e->getFile()) . "</p>";
+      echo "<p><strong>行番号:</strong> " . $e->getLine() . "</p>";
+      echo "<h2>スタックトレース:</h2>";
+      echo "<pre style='background:#f5f5f5;padding:10px;border-radius:5px;overflow-x:auto;'>" . htmlspecialchars($e->getTraceAsString()) . "</pre>";
+    }
+    echo "</div>";
+    echo "<h2>デバッグ:</h2>";
+    echo "<p><a href='/auth/login?debug=1'>認可URLを確認する（/auth/login?debug=1）</a></p>";
+    echo "</body></html>";
+    exit;
   } catch (Exception $e) {
+    // 一般的なExceptionをキャッチ
+    dbg_dump($config, '9_exception', [
+      'type' => get_class($e),
+      'msg'  => $e->getMessage(),
+      'file' => $e->getFile(),
+      'line' => $e->getLine(),
+      'trace'=> $e->getTraceAsString(),
+    ]);
+    
     error_log('upsertUser Exception: ' . $e->getMessage());
+    // 本番環境でも最低限のエラー情報を表示
+    header('Content-Type: text/html; charset=UTF-8');
+    echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>UpsertUser Failed - Exception</title>";
+    echo "<style>body{font-family:sans-serif;max-width:1200px;margin:20px auto;padding:20px;}code{background:#f5f5f5;padding:2px 6px;border-radius:3px;word-break:break-all;}.ng{color:red;font-weight:bold;}.info{background:#e8f4f8;padding:15px;border-radius:5px;margin:10px 0;}</style>";
+    echo "</head><body>";
+    echo "<h1 class='ng'>❌ ユーザー登録失敗（Exception）</h1>";
+    echo "<div class='info'>";
+    echo "<p><strong>エラーメッセージ:</strong><br><code>" . htmlspecialchars($e->getMessage()) . "</code></p>";
+    echo "<p><strong>ストレージタイプ:</strong> " . (get_class($storage)) . "</p>";
     if (!$isProd) {
-      // 開発環境: 詳細なエラー情報を表示
-      header('Content-Type: text/html; charset=UTF-8');
-      echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>UpsertUser Failed - Exception</title>";
-      echo "<style>body{font-family:sans-serif;max-width:1200px;margin:20px auto;padding:20px;}code{background:#f5f5f5;padding:2px 6px;border-radius:3px;word-break:break-all;}.ng{color:red;font-weight:bold;}.info{background:#e8f4f8;padding:15px;border-radius:5px;margin:10px 0;}</style>";
-      echo "</head><body>";
-      echo "<h1 class='ng'>❌ ユーザー登録失敗（Exception）</h1>";
-      echo "<div class='info'>";
-      echo "<p><strong>エラーメッセージ:</strong><br><code>" . htmlspecialchars($e->getMessage()) . "</code></p>";
+      // 開発環境のみ詳細情報を表示
       echo "<p><strong>ファイル:</strong> " . htmlspecialchars($e->getFile()) . "</p>";
       echo "<p><strong>行番号:</strong> " . $e->getLine() . "</p>";
-      echo "<p><strong>ストレージタイプ:</strong> " . (get_class($storage)) . "</p>";
-      echo "</div>";
       echo "<h2>スタックトレース:</h2>";
       echo "<pre style='background:#f5f5f5;padding:10px;border-radius:5px;overflow-x:auto;'>" . htmlspecialchars($e->getTraceAsString()) . "</pre>";
-      echo "<h2>デバッグ:</h2>";
-      echo "<p><a href='/auth/login?debug=1'>認可URLを確認する（/auth/login?debug=1）</a></p>";
-      echo "</body></html>";
-      exit;
-    } else {
-      render_error('認証に失敗しました（ユーザー登録失敗）');
-      return;
     }
+    echo "</div>";
+    echo "<h2>デバッグ:</h2>";
+    echo "<p><a href='/auth/login?debug=1'>認可URLを確認する（/auth/login?debug=1）</a></p>";
+    echo "</body></html>";
+    exit;
+  } catch (Throwable $e) {
+    // Throwableでキャッチ（Error系も含む、最後の砦）
+    dbg_dump($config, '9_throwable', [
+      'type' => get_class($e),
+      'msg'  => $e->getMessage(),
+      'file' => $e->getFile(),
+      'line' => $e->getLine(),
+      'trace'=> $e->getTraceAsString(),
+    ]);
+    
+    error_log('upsertUser Throwable: ' . $e->getMessage());
+    header('Content-Type: text/html; charset=UTF-8');
+    echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>UpsertUser Failed</title>";
+    echo "<style>body{font-family:sans-serif;max-width:1200px;margin:20px auto;padding:20px;}code{background:#f5f5f5;padding:2px 6px;border-radius:3px;word-break:break-all;}.ng{color:red;font-weight:bold;}.info{background:#e8f4f8;padding:15px;border-radius:5px;margin:10px 0;}</style>";
+    echo "</head><body>";
+    echo "<h1 class='ng'>❌ ユーザー登録失敗</h1>";
+    echo "<div class='info'>";
+    echo "<p><strong>エラータイプ:</strong> " . htmlspecialchars(get_class($e)) . "</p>";
+    echo "<p><strong>エラーメッセージ:</strong><br><code>" . htmlspecialchars($e->getMessage()) . "</code></p>";
+    if (!$isProd) {
+      echo "<p><strong>ファイル:</strong> " . htmlspecialchars($e->getFile()) . "</p>";
+      echo "<p><strong>行番号:</strong> " . $e->getLine() . "</p>";
+      echo "<h2>スタックトレース:</h2>";
+      echo "<pre style='background:#f5f5f5;padding:10px;border-radius:5px;overflow-x:auto;'>" . htmlspecialchars($e->getTraceAsString()) . "</pre>";
+    }
+    echo "</div>";
+    echo "</body></html>";
+    exit;
   }
   $userId = (int)$user['id'];
 
@@ -499,6 +750,31 @@ route('GET', '/auth/callback', function() use ($config, $storage) {
   // 10) リダイレクト
   header('Location: /templates');
   exit;
+  } catch (Throwable $e) {
+    // すべてのエラーをキャッチして詳細情報を表示
+    error_log('CALLBACK: Unexpected error: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
+    error_log('CALLBACK: Stack trace: ' . $e->getTraceAsString());
+    $isProd = isset($config['APP_ENV']) && $config['APP_ENV'] === 'prod';
+    header('Content-Type: text/html; charset=UTF-8');
+    echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Callback Error</title>";
+    echo "<style>body{font-family:sans-serif;max-width:1200px;margin:20px auto;padding:20px;}code{background:#f5f5f5;padding:2px 6px;border-radius:3px;word-break:break-all;}.ng{color:red;font-weight:bold;}.info{background:#e8f4f8;padding:15px;border-radius:5px;margin:10px 0;}</style>";
+    echo "</head><body>";
+    echo "<h1 class='ng'>❌ 認証エラー</h1>";
+    echo "<div class='info'>";
+    echo "<p><strong>エラータイプ:</strong> " . htmlspecialchars(get_class($e)) . "</p>";
+    echo "<p><strong>エラーメッセージ:</strong><br><code>" . htmlspecialchars($e->getMessage()) . "</code></p>";
+    echo "<p><strong>ファイル:</strong> " . htmlspecialchars($e->getFile()) . "</p>";
+    echo "<p><strong>行番号:</strong> " . $e->getLine() . "</p>";
+    if (!$isProd) {
+      echo "<h2>スタックトレース:</h2>";
+      echo "<pre style='background:#f5f5f5;padding:10px;border-radius:5px;overflow-x:auto;'>" . htmlspecialchars($e->getTraceAsString()) . "</pre>";
+    }
+    echo "</div>";
+    echo "<h2>デバッグ:</h2>";
+    echo "<p><a href='/auth/login?debug=1'>認可URLを確認する（/auth/login?debug=1）</a></p>";
+    echo "</body></html>";
+    exit;
+  }
 });
 
 route('POST', '/auth/logout', function() {
