@@ -147,28 +147,64 @@ function render_error(string $message, ?string $detail = null): void {
 }
 
 function csrf_token(): string {
+  // セッション保存に依存しすぎると環境差でCSRF不一致が起きるため、
+  // session_id + APP_KEY から決定的に生成する（同一セッション内で常に一致）。
+  // APP_KEY未設定時は従来どおりセッションランダムにフォールバック。
+  global $config;
+  $appKey = isset($config['APP_KEY']) ? (string)$config['APP_KEY'] : '';
+  if ($appKey !== '' && $appKey !== 'CHANGE_ME_TO_A_LONG_RANDOM_STRING_AT_DEPLOYMENT') {
+    $sid = session_id();
+    $token = hash_hmac('sha256', 'csrf:' . $sid, $appKey);
+    // 互換のためセッションにも保持（あってもなくても良い）
+    $_SESSION['csrf_token'] = $token;
+    return $token;
+  }
+
   if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
   }
-  return $_SESSION['csrf_token'];
+  return (string)$_SESSION['csrf_token'];
 }
 
 function csrf_verify(): bool {
   $token = $_POST['csrf_token'] ?? '';
   $sessionToken = $_SESSION['csrf_token'] ?? '';
-  if (empty($sessionToken) || empty($token)) {
+  if (empty($token)) {
     error_log('MailLoop CSRF: Missing token');
     http_response_code(403);
     render_error('不正なリクエストです。CSRFトークンが無効です。');
     return false;
   }
-  if (!hash_equals($sessionToken, $token)) {
+
+  // 1) セッションにトークンがある場合はそれを優先
+  if (!empty($sessionToken) && hash_equals((string)$sessionToken, (string)$token)) {
+    return true;
+  }
+
+  // 2) 決定的CSRF（session_id + APP_KEY）で検証（セッション保存が揺れても通る）
+  global $config;
+  $appKey = isset($config['APP_KEY']) ? (string)$config['APP_KEY'] : '';
+  if ($appKey !== '' && $appKey !== 'CHANGE_ME_TO_A_LONG_RANDOM_STRING_AT_DEPLOYMENT') {
+    $expect = hash_hmac('sha256', 'csrf:' . session_id(), $appKey);
+    if (hash_equals($expect, (string)$token)) {
+      // 互換のためセッションにも同期
+      $_SESSION['csrf_token'] = $expect;
+      return true;
+    }
+  }
+
+  // 3) 不一致
+  if (!empty($sessionToken) && !hash_equals((string)$sessionToken, (string)$token)) {
     error_log('MailLoop CSRF: Token mismatch');
     http_response_code(403);
     render_error('不正なリクエストです。CSRFトークンが一致しません。');
     return false;
   }
-  return true;
+
+  error_log('MailLoop CSRF: Missing session token');
+  http_response_code(403);
+  render_error('不正なリクエストです。CSRFトークンが無効です。');
+  return false;
 }
 
 // Debug route to confirm docroot / session (dev only)
