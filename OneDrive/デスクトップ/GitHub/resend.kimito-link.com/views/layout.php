@@ -24,6 +24,8 @@
 
   <main class="container">
     <?php
+      // 一部画面で未定義になるのでデフォルトを用意（warning抑制）
+      if (!isset($page)) $page = '';
       $contentFile = __DIR__ . '/' . $view . '.php';
       if (file_exists($contentFile)) require $contentFile;
       else echo "<p>View not found</p>";
