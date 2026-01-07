@@ -13,6 +13,7 @@
 <?php endif; ?>
 
 <form method="post" action="/templates/save" class="form">
+  <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrf_token()) ?>">
   <input type="hidden" name="id" value="<?=htmlspecialchars((string)$id)?>">
   <label>タイトル（自分用）</label>
   <input name="title" value="<?=htmlspecialchars($t['title'] ?? '')?>" required>
