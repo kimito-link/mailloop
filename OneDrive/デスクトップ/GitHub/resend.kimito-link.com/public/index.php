@@ -341,36 +341,36 @@ route('GET', '/auth/callback', function() use ($config, $storage) {
 
   // エラーハンドリングを強化するため、すべてのエラーをキャッチ
   try {
-  $isProd = (($config['APP_ENV'] ?? 'dev') === 'prod');
-  $dbg = isset($_GET['dbg']) ? $_GET['dbg'] : '';
-  $dbgKey = isset($config['DEBUG_KEY']) ? $config['DEBUG_KEY'] : '';
-  // 開発環境ではdbg_keyが設定されていない場合は常にOK、設定されている場合は検証
-  $dbgKeyOk = (!$isProd && ($dbgKey === '' || (isset($_GET['dbg_key']) && hash_equals($dbgKey, $_GET['dbg_key']))));
-  // 開発環境ではdbg_skip=1だけでスキップ可能（dbg_key不要）
-  $dbgSkip = (!$isProd && (($_GET['dbg_skip'] ?? '') === '1'));
+    $isProd = (($config['APP_ENV'] ?? 'dev') === 'prod');
+    $dbg = isset($_GET['dbg']) ? $_GET['dbg'] : '';
+    $dbgKey = isset($config['DEBUG_KEY']) ? $config['DEBUG_KEY'] : '';
+    // 開発環境ではdbg_keyが設定されていない場合は常にOK、設定されている場合は検証
+    $dbgKeyOk = (!$isProd && ($dbgKey === '' || (isset($_GET['dbg_key']) && hash_equals($dbgKey, $_GET['dbg_key']))));
+    // 開発環境ではdbg_skip=1だけでスキップ可能（dbg_key不要）
+    $dbgSkip = (!$isProd && (($_GET['dbg_skip'] ?? '') === '1'));
 
-  // state検証を "確実に" スキップする最小実装（dev限定）
-  if ($dbgSkip) {
-    header('Content-Type: text/plain; charset=UTF-8');
-    echo "SKIPPED_STATE_VERIFY\n";
-    echo "__FILE__=" . __FILE__ . "\n";
-    echo "APP_ENV=" . ($config['APP_ENV'] ?? 'dev') . "\n";
-    echo "isProd=" . ($isProd ? 'true' : 'false') . "\n";
-    echo "dbgSkip=" . ($dbgSkip ? 'true' : 'false') . "\n";
-    echo "state=" . ($_GET['state'] ?? '') . "\n";
-    echo "REQUEST_URI=" . ($_SERVER['REQUEST_URI'] ?? 'NONE') . "\n";
-    echo "\n続行します...\n";
-    // exitしない（続行）
-  }
+    // state検証を "確実に" スキップする最小実装（dev限定）
+    if ($dbgSkip) {
+      header('Content-Type: text/plain; charset=UTF-8');
+      echo "SKIPPED_STATE_VERIFY\n";
+      echo "__FILE__=" . __FILE__ . "\n";
+      echo "APP_ENV=" . ($config['APP_ENV'] ?? 'dev') . "\n";
+      echo "isProd=" . ($isProd ? 'true' : 'false') . "\n";
+      echo "dbgSkip=" . ($dbgSkip ? 'true' : 'false') . "\n";
+      echo "state=" . ($_GET['state'] ?? '') . "\n";
+      echo "REQUEST_URI=" . ($_SERVER['REQUEST_URI'] ?? 'NONE') . "\n";
+      echo "\n続行します...\n";
+      // exitしない（続行）
+    }
 
-  $state = isset($_GET['state']) ? $_GET['state'] : '';
+    $state = isset($_GET['state']) ? $_GET['state'] : '';
 
 
-  // dbg_skip=1 & dbg_key=... のときだけ state 検証をスキップ（dev限定）
-  // それ以外は従来通り state 検証を行う
-  if (!$dbgSkip) {
-    // 0) stateが来てない場合の表示（切り分け高速化）
-    if (empty($state)) {
+    // dbg_skip=1 & dbg_key=... のときだけ state 検証をスキップ（dev限定）
+    // それ以外は従来通り state 検証を行う
+    if (!$dbgSkip) {
+      // 0) stateが来てない場合の表示（切り分け高速化）
+      if (empty($state)) {
       if (!$isProd) {
         header('Content-Type: text/html; charset=UTF-8');
         echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>STATE_MISSING_FROM_GOOGLE_CALLBACK</title>";
@@ -396,60 +396,28 @@ route('GET', '/auth/callback', function() use ($config, $storage) {
         render_error('不正な認証リクエストです（stateパラメータがありません）');
         return;
       }
-    }
-  } else {
-    // state検証スキップ時でも最低限 code は必要
-    if (!isset($_GET['code'])) {
-      header('Content-Type: text/plain; charset=UTF-8');
-      echo "DBG state skip but code is missing\n";
-      exit;
-    }
-  }
-  // 0) stateが来てない場合の表示（切り分け高速化）
-  $state = isset($_GET['state']) ? $_GET['state'] : '';
-  if (empty($state)) {
-    $isProd = isset($config['APP_ENV']) && $config['APP_ENV'] === 'prod';
-    if (!$isProd) {
-      // 開発環境: 詳細なデバッグ情報を表示
-      header('Content-Type: text/html; charset=UTF-8');
-      echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>STATE_MISSING_FROM_GOOGLE_CALLBACK</title>";
-      echo "<style>body{font-family:sans-serif;max-width:1200px;margin:20px auto;padding:20px;}code{background:#f5f5f5;padding:2px 6px;border-radius:3px;word-break:break-all;}.ng{color:red;font-weight:bold;}</style>";
-      echo "</head><body>";
-      echo "<h1 class='ng'>❌ STATE_MISSING_FROM_GOOGLE_CALLBACK</h1>";
-      echo "<p>Googleからのコールバックにstateパラメータが含まれていません。</p>";
-      echo "<h2>REQUEST_URI:</h2>";
-      $requestUri = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : 'NONE';
-      echo "<p style='background:#f5f5f5;padding:10px;border-radius:5px;word-break:break-all;'><code>" . htmlspecialchars($requestUri) . "</code></p>";
-      echo "<h2>GET パラメータ:</h2>";
-      echo "<ul>";
-      echo "<li>code: " . (isset($_GET['code']) ? 'あり（' . substr($_GET['code'], 0, 20) . '...）' : 'なし') . "</li>";
-      echo "<li>scope: " . (isset($_GET['scope']) ? 'あり' : 'なし') . "</li>";
-      echo "<li class='ng'>state: なし</li>";
-      echo "</ul>";
-      echo "<h2>デバッグ:</h2>";
-      echo "<p><a href='/auth/login?debug=1'>認可URLを確認する（/auth/login?debug=1）</a></p>";
-      echo "</body></html>";
-      exit;
+      }
     } else {
-      // 本番環境: 一般エラー
-      http_response_code(400);
-      render_error('不正な認証リクエストです（stateパラメータがありません）');
-      return;
+      // state検証スキップ時でも最低限 code は必要
+      if (!isset($_GET['code'])) {
+        header('Content-Type: text/plain; charset=UTF-8');
+        echo "DBG state skip but code is missing\n";
+        exit;
+      }
     }
-  }
-  
-  // 1) ユーザー拒否
-  if (!empty($_GET['error'])) {
+    
+    // 1) ユーザー拒否
+    if (!empty($_GET['error'])) {
     $errorDesc = isset($_GET['error_description']) ? $_GET['error_description'] : (isset($_GET['error']) ? $_GET['error'] : '');
     if (function_exists('app_log')) {
       app_log('OAuth error: ' . $errorDesc);
     }
-    render_error('認証がキャンセルされました。もう一度お試しください。');
-    return;
-  }
+      render_error('認証がキャンセルされました。もう一度お試しください。');
+      return;
+    }
 
-  // 2) state検証（dbgSkip の場合はスキップ）
-  if (!$dbgSkip) {
+    // 2) state検証（dbgSkip の場合はスキップ）
+    if (!$dbgSkip) {
     if (function_exists('app_log')) {
       app_log('CALLBACK: URI=' . (isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : 'NONE'));
       app_log('CALLBACK: GET state=' . substr($state, 0, 32) . '...');
@@ -488,32 +456,34 @@ route('GET', '/auth/callback', function() use ($config, $storage) {
       }
     }
     
-    if (function_exists('app_log')) {
-      app_log('CALLBACK: STATE VERIFICATION OK');
+      if (function_exists('app_log')) {
+        app_log('CALLBACK: STATE VERIFICATION OK');
+      }
+    } else {
+      // スキップ時に簡易表示（開発環境では必ず表示）
+      header('Content-Type: text/plain; charset=UTF-8');
+      echo "DBG state verification skipped (dbg_skip=1)\n";
+      echo "APP_ENV=" . ($config['APP_ENV'] ?? 'dev') . "\n";
+      echo "isProd=" . ($isProd ? 'true' : 'false') . "\n";
+      echo "dbgSkip=" . ($dbgSkip ? 'true' : 'false') . "\n";
+      echo "state=" . $state . "\n";
+      echo "REQUEST_URI=" . ($_SERVER['REQUEST_URI'] ?? 'NONE') . "\n";
+      echo "\n続行します...\n";
+      // exitしない（続行）
     }
-  } else {
-    // スキップ時に簡易表示（開発環境では必ず表示）
-    header('Content-Type: text/plain; charset=UTF-8');
-    echo "DBG state verification skipped (dbg_skip=1)\n";
-    echo "APP_ENV=" . ($config['APP_ENV'] ?? 'dev') . "\n";
-    echo "isProd=" . ($isProd ? 'true' : 'false') . "\n";
-    echo "dbgSkip=" . ($dbgSkip ? 'true' : 'false') . "\n";
-    echo "state=" . $state . "\n";
-    echo "REQUEST_URI=" . ($_SERVER['REQUEST_URI'] ?? 'NONE') . "\n";
-    echo "\n続行します...\n";
-    // exitしない（続行）
-  }
 
-  // 3) code
-  $code = $_GET['code'] ?? '';
-  if ($code === '') {
-    http_response_code(400);
-    render_error('認証コードが取得できませんでした。');
-    return;
-  }
+    // 3) code
+    $code = $_GET['code'] ?? '';
+    if ($code === '') {
+      http_response_code(400);
+      render_error('認証コードが取得できませんでした。');
+      return;
+    }
 
-  // 4) code -> token
-  [$resp, $data] = google_exchange_code($config, $code);
+    // 4) code -> token
+  $result = google_exchange_code($config, $code);
+  $resp = $result[0];
+  $data = $result[1];
   // 古いPHP対応：??演算子の代わりにisset()を使用
   $respCode = isset($resp['code']) ? (int)$resp['code'] : 0;
   $accessToken = isset($data['access_token']) ? $data['access_token'] : '';
@@ -524,12 +494,14 @@ route('GET', '/auth/callback', function() use ($config, $storage) {
     return;
   }
 
-  $access = $accessToken;
-  $refresh = isset($data['refresh_token']) ? $data['refresh_token'] : null;
-  $expiresIn = isset($data['expires_in']) ? (int)$data['expires_in'] : 3500;
+    $access = $accessToken;
+    $refresh = isset($data['refresh_token']) ? $data['refresh_token'] : null;
+    $expiresIn = isset($data['expires_in']) ? (int)$data['expires_in'] : 3500;
 
-  // 5) userinfo
-  [$uResp, $uData] = google_userinfo($access);
+    // 5) userinfo
+  $userinfoResult = google_userinfo($access);
+  $uResp = $userinfoResult[0];
+  $uData = $userinfoResult[1];
   // 古いPHP対応：??演算子の代わりにisset()を使用
   $sub = isset($uData['sub']) ? $uData['sub'] : (isset($uData['id']) ? $uData['id'] : '');
   $respCode = isset($uResp['code']) ? (int)$uResp['code'] : 0;
@@ -540,20 +512,20 @@ route('GET', '/auth/callback', function() use ($config, $storage) {
     return;
   }
 
-  // 6) users upsert
-  // 変数名を変更して上書きを防止（$oauthUser → upsert → $dbUser）
-  $oauthUser = [
+    // 6) users upsert
+    // 変数名を変更して上書きを防止（$oauthUser → upsert → $dbUser）
+    $oauthUser = [
     'provider' => 'google',
     'provider_sub' => $sub,
     'email' => isset($uData['email']) ? $uData['email'] : null,
     'name' => isset($uData['name']) ? $uData['name'] : null,
     'picture' => isset($uData['picture']) ? $uData['picture'] : null,
-  ];
-  
-  // dbg=1: upsert直前（入力確認）
-  dbg_dump($config, '1_before_upsert_user_input', $oauthUser);
+    ];
+    
+    // dbg=1: upsert直前（入力確認）
+    dbg_dump($config, '1_before_upsert_user_input', $oauthUser);
 
-  try {
+    try {
     $dbUser = $storage->upsertUser($oauthUser);
     
     // dbg=2: upsert後（戻り値確認）
@@ -593,7 +565,6 @@ route('GET', '/auth/callback', function() use ($config, $storage) {
       'trace'=> $e->getTraceAsString(),
     ]);
     
-    if (!$isProd && $dbgKeyOk && $dbg === '9') {
     if (!$isProd && $dbgKeyOk && $dbg === '9') {
       header('Content-Type: text/plain; charset=UTF-8');
       echo "DBG PDOException in upsertUser\n";
@@ -728,30 +699,30 @@ route('GET', '/auth/callback', function() use ($config, $storage) {
     echo "</body></html>";
     exit;
   }
-  $userId = (int)$user['id'];
+    $userId = (int)$user['id'];
 
-  // 7) token保存（storage側が encrypt する形でもOKだが、今の流儀に合わせてここでencrypt）
-  $tokenRow = [
+    // 7) token保存（storage側が encrypt する形でもOKだが、今の流儀に合わせてここでencrypt）
+    $tokenRow = [
     'access_token_enc' => encrypt_str($access, $config['APP_KEY']),
     'refresh_token_enc' => $refresh ? encrypt_str($refresh, $config['APP_KEY']) : null,
     'expires_at' => date('Y-m-d H:i:s', time() + $expiresIn),
     'scopes' => $config['GMAIL_SCOPE'],
-  ];
-  $storage->saveToken($userId, $tokenRow);
+    ];
+    $storage->saveToken($userId, $tokenRow);
 
-  // 8) セッション確立
-  session_regenerate_id(true);
-  $_SESSION['user_id'] = $userId;
-  $_SESSION['user'] = $user;
+    // 8) セッション確立
+    session_regenerate_id(true);
+    $_SESSION['user_id'] = $userId;
+    $_SESSION['user'] = $user;
 
-  // 9) CSRF再生成
-  $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    // 9) CSRF再生成
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 
-  // 10) リダイレクト
-  header('Location: /templates');
-  exit;
+    // 10) リダイレクト
+    header('Location: /templates');
+    exit;
   } catch (Throwable $e) {
-    // すべてのエラーをキャッチして詳細情報を表示
+    // すべてのエラーをキャッチして詳細情報を表示（/auth/callbackルート用）
     error_log('CALLBACK: Unexpected error: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
     error_log('CALLBACK: Stack trace: ' . $e->getTraceAsString());
     $isProd = isset($config['APP_ENV']) && $config['APP_ENV'] === 'prod';
@@ -877,7 +848,11 @@ route('POST', '/groups/save', function() use ($storage) {
   $cc=parse_email_list($_POST['cc_list']??'');
   $bcc=parse_email_list($_POST['bcc_list']??'');
   // 重複除去（dedupe）を先に実行
-  [$to,$cc,$bcc,$warn] = dedupe_priority($to,$cc,$bcc);
+  $dedupeResult = dedupe_priority($to,$cc,$bcc);
+  $to = $dedupeResult[0];
+  $cc = $dedupeResult[1];
+  $bcc = $dedupeResult[2];
+  $warn = $dedupeResult[3];
   
   // バリデーション（dedupe後の件数で判定）
   $grp = ['name'=>$name, 'to'=>$to, 'cc'=>$cc, 'bcc'=>$bcc];
@@ -1003,14 +978,18 @@ route('POST', '/send/execute', function() use ($storage, $config) {
   set_time_limit(60);
   
   // Gmail送信（401の場合は一度だけrefreshして再試行、429/5xxは最大2回リトライ）
-  [$sResp,$sData]=gmail_send_message($access, $mail);
+  $sendResult = gmail_send_message($access, $mail);
+  $sResp = $sendResult[0];
+  $sData = $sendResult[1];
   $httpCode = (int)($sResp['code'] ?? 0);
   
   // 401の場合は一度だけrefreshして再試行
   if ($httpCode === 401) {
     try {
       $access = force_refresh_google_access_token($storage, $config, (int)$u['id']);
-      [$sResp,$sData]=gmail_send_message($access, $mail);
+      $sendResult = gmail_send_message($access, $mail);
+      $sResp = $sendResult[0];
+      $sData = $sendResult[1];
       $httpCode = (int)($sResp['code'] ?? 0);
     } catch (RuntimeException $e) {
       error_log('Force refresh failed in /send/execute: ' . $e->getMessage());
@@ -1057,7 +1036,9 @@ route('POST', '/send/execute', function() use ($storage, $config) {
   $maxRetries = 2;
   while (($httpCode === 429 || ($httpCode >= 500 && $httpCode < 600)) && $retryCount < $maxRetries) {
     sleep($retryCount + 1); // 1秒、2秒
-    [$sResp,$sData]=gmail_send_message($access, $mail);
+    $sendResult = gmail_send_message($access, $mail);
+    $sResp = $sendResult[0];
+    $sData = $sendResult[1];
     $httpCode = (int)($sResp['code'] ?? 0);
     $retryCount++;
   }
