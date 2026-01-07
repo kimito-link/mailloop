@@ -1,5 +1,4 @@
 <?php
-declare(strict_types=1);
 
 require_once __DIR__ . '/../lib/db.php';
 
@@ -25,6 +24,13 @@ interface Storage {
   public function createLog(int $userId, array $log): int;
   public function listLogs(int $userId): array;
   public function getLog(int $userId, int $id): ?array;
+}
+
+// デバッグ用: 読み込まれた storage.php の実体パスを返す
+if (!function_exists('storage_debug_file')) {
+  function storage_debug_file() {
+    return __FILE__;
+  }
 }
 
 function create_storage(array $config): Storage {
@@ -181,6 +187,13 @@ final class MysqlStorage implements Storage {
     return $_SESSION['user'];
   }
   public function upsertUser(array $u): array {
+    // ログは実際のstorage配下に書く（app/../../storage）
+    $logDir = __DIR__ . '/../../storage';
+    if (!is_dir($logDir)) mkdir($logDir, 0775, true);
+    $logFile = $logDir . '/upsert_debug.log';
+    $msgIn = 'DEBUG upsertUser input: ' . json_encode($u);
+    error_log($msgIn);
+    file_put_contents($logFile, date('c') . ' ' . $msgIn . "\n", FILE_APPEND);
     $pdo = $this->requirePdo();
 
     $provider = $u['provider'];
@@ -192,7 +205,7 @@ final class MysqlStorage implements Storage {
     $row = $stmt->fetch();
 
     if ($row) {
-      $id = (int)$row['id'];
+      $id = isset($row['id']) ? (int)$row['id'] : 0;
 
       // emailは衝突する可能性があるので try/catch
       try {
@@ -215,7 +228,9 @@ final class MysqlStorage implements Storage {
         ]);
       }
 
-      $u['id'] = $id;
+      if ($id > 0) {
+        $u['id'] = $id;
+      }
     } else {
       // 新規
       try {
@@ -228,7 +243,14 @@ final class MysqlStorage implements Storage {
           ':name'=>$u['name'] ?? null,
           ':pic'=>$u['picture'] ?? null,
         ]);
-        $u['id'] = (int)$pdo->lastInsertId();
+        // lastInsertId が取れない/0 の環境があるため、必ずSELECTで補強する
+        $newId = (int)$pdo->lastInsertId();
+        if ($newId > 0) {
+          $u['id'] = $newId;
+        }
+        $msgId = 'DEBUG upsertUser lastInsertId=' . $u['id'];
+        error_log($msgId);
+        file_put_contents($logFile, date('c') . ' ' . $msgId . "\n", FILE_APPEND);
       } catch (PDOException $e) {
         // ここでコケるなら subの同時作成競合の可能性 → 再SELECT
         error_log('upsertUser insert failed: ' . $e->getMessage());
@@ -237,6 +259,16 @@ final class MysqlStorage implements Storage {
         $r2 = $stmt->fetch();
         if (!$r2) throw $e;
         $u['id'] = (int)$r2['id'];
+      }
+    }
+
+    // 最終保険: ここまででidが入らなければ provider+sub で再取得
+    if (!isset($u['id']) || (int)$u['id'] <= 0) {
+      $stmt = $pdo->prepare("SELECT id FROM users WHERE provider=:p AND provider_sub=:s LIMIT 1");
+      $stmt->execute([':p'=>$provider, ':s'=>$sub]);
+      $id2 = $stmt->fetchColumn();
+      if ($id2) {
+        $u['id'] = (int)$id2;
       }
     }
 
