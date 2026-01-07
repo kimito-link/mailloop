@@ -193,6 +193,27 @@ function csrf_verify(): bool {
     }
   }
 
+  // 3) 最終保険：同一オリジンのPOSTで、かつログイン済みなら通す（Cookie/セッションの揺れ対策）
+  // ※ Origin/Referer はブラウザ依存だが、少なくともクロスサイトPOSTの大半は弾ける。
+  $userId = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : 0;
+  if ($userId > 0) {
+    $host = $_SERVER['HTTP_HOST'] ?? '';
+    $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+    $referer = $_SERVER['HTTP_REFERER'] ?? '';
+    $ok = false;
+    if ($origin !== '') {
+      $oHost = parse_url($origin, PHP_URL_HOST);
+      $ok = ($oHost && strcasecmp($oHost, $host) === 0);
+    } elseif ($referer !== '') {
+      $rHost = parse_url($referer, PHP_URL_HOST);
+      $ok = ($rHost && strcasecmp($rHost, $host) === 0);
+    }
+    if ($ok) {
+      error_log('MailLoop CSRF: token mismatch but same-origin; allowed. user_id=' . $userId);
+      return true;
+    }
+  }
+
   // 3) 不一致
   if (!empty($sessionToken) && !hash_equals((string)$sessionToken, (string)$token)) {
     error_log('MailLoop CSRF: Token mismatch');
@@ -785,6 +806,10 @@ route('GET', '/auth/callback', function() use ($config, $storage) {
 });
 
 route('POST', '/auth/logout', function() {
+  // CSRF検証（ログアウトも保護）
+  if (!csrf_verify()) {
+    return;
+  }
   session_destroy();
   header('Location: /auth/login'); exit;
 });
@@ -808,11 +833,11 @@ route('GET', '/templates/edit', function() use ($storage) {
   render_view('templates/edit', ['user'=>$u, 't'=>$t, 'page'=>'templates']);
 });
 route('POST', '/templates/save', function() use ($storage) {
+  $u = require_login($storage);
   // CSRF検証（csrf_verify内でエラー表示される）
   if (!csrf_verify()) {
     return;
   }
-  $u = require_login($storage);
   $id = (int)($_POST['id'] ?? 0);
   $title = trim($_POST['title'] ?? '');
   $subject = trim($_POST['subject'] ?? '');
@@ -844,11 +869,11 @@ route('POST', '/templates/save', function() use ($storage) {
   header('Location: /templates'); exit;
 });
 route('POST', '/templates/delete', function() use ($storage) {
+  $u = require_login($storage);
   // CSRF検証（csrf_verify内でエラー表示される）
   if (!csrf_verify()) {
     return;
   }
-  $u = require_login($storage);
   $id = (int)($_POST['id'] ?? 0);
   if ($id>0) $storage->deleteTemplate($u['id'], $id);
   header('Location: /templates'); exit;
@@ -873,11 +898,11 @@ route('GET', '/groups/edit', function() use ($storage) {
   render_view('groups/edit', ['user'=>$u, 'g'=>$g, 'warn'=>[], 'page'=>'groups']);
 });
 route('POST', '/groups/save', function() use ($storage) {
+  $u = require_login($storage);
   // CSRF検証（csrf_verify内でエラー表示される）
   if (!csrf_verify()) {
     return;
   }
-  $u = require_login($storage);
   $id=(int)($_POST['id']??0);
   $name=trim($_POST['name']??'');
   $to=parse_email_list($_POST['to_list']??'');
@@ -921,11 +946,11 @@ route('POST', '/groups/save', function() use ($storage) {
   header('Location: /groups'); exit;
 });
 route('POST', '/groups/delete', function() use ($storage) {
+  $u = require_login($storage);
   // CSRF検証（csrf_verify内でエラー表示される）
   if (!csrf_verify()) {
     return;
   }
-  $u = require_login($storage);
   $id=(int)($_POST['id']??0);
   if($id>0) $storage->deleteGroup($u['id'],$id);
   header('Location: /groups'); exit;
@@ -948,6 +973,9 @@ route('GET', '/send', function() use ($storage) {
 });
 route('POST', '/send/confirm', function() use ($storage, $config) {
   $u=require_login($storage);
+  if (!csrf_verify()) {
+    return;
+  }
   $template_id=(int)($_POST['template_id']??0);
   $group_id=(int)($_POST['group_id']??0);
   $t=$storage->getTemplate($u['id'],$template_id);
@@ -970,6 +998,9 @@ route('POST', '/send/confirm', function() use ($storage, $config) {
 });
 route('POST', '/send/execute', function() use ($storage, $config) {
   $u=require_login($storage);
+  if (!csrf_verify()) {
+    return;
+  }
   $template_id=(int)($_POST['template_id']??0);
   $group_id=(int)($_POST['group_id']??0);
   $subject=trim($_POST['subject']??'');

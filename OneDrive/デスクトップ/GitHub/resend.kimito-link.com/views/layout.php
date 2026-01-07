@@ -9,8 +9,14 @@
 <body>
   <header class="topbar">
     <div class="brand">MailLoop</div>
-    <?php if (!empty($user)): ?>
+    <?php 
+    // $userが配列でidキーがある場合のみ表示
+    $hasValidUser = isset($user) && is_array($user) && array_key_exists('id', $user);
+    if ($hasValidUser): ?>
       <form method="post" action="/auth/logout" class="logout">
+        <?php if (function_exists('csrf_token')): ?>
+          <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrf_token()) ?>">
+        <?php endif; ?>
         <button type="submit">ログアウト</button>
       </form>
     <?php endif; ?>
@@ -24,7 +30,10 @@
     ?>
   </main>
 
-  <?php if (!empty($user)): ?>
+  <?php 
+  // $userが配列でidキーがある場合のみ表示
+  $hasValidUser = isset($user) && is_array($user) && array_key_exists('id', $user);
+  if ($hasValidUser): ?>
   <nav class="bottomnav">
     <a class="<?=($page==='templates'?'active':'')?>" href="/templates">テンプレ</a>
     <a class="<?=($page==='groups'?'active':'')?>" href="/groups">宛先</a>
