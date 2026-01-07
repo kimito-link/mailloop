@@ -1,13 +1,20 @@
 <?php
-declare(strict_types=1);
+// declare(strict_types=1); // XserverのPHPバージョンが古いためコメントアウト
 
 // base64url_encode()はgoogle_oauth.phpで定義されているため、ここでは定義しない
+function extract_emails(array $list): array {
+  return array_map(function($item) {
+    if (is_array($item)) return $item['email'] ?? '';
+    return (string)$item;
+  }, $list);
+}
+
 function build_rfc822(array $mail): string {
   $headers = [];
   $headers[] = 'From: ' . $mail['from'];
-  if (!empty($mail['to']))  $headers[] = 'To: ' . implode(', ', $mail['to']);
-  if (!empty($mail['cc']))  $headers[] = 'Cc: ' . implode(', ', $mail['cc']);
-  if (!empty($mail['bcc'])) $headers[] = 'Bcc: ' . implode(', ', $mail['bcc']);
+  if (!empty($mail['to']))  $headers[] = 'To: ' . implode(', ', extract_emails($mail['to']));
+  if (!empty($mail['cc']))  $headers[] = 'Cc: ' . implode(', ', extract_emails($mail['cc']));
+  if (!empty($mail['bcc'])) $headers[] = 'Bcc: ' . implode(', ', extract_emails($mail['bcc']));
   $headers[] = 'Subject: ' . mb_encode_mimeheader($mail['subject'], 'UTF-8');
   $headers[] = 'MIME-Version: 1.0';
   $headers[] = 'Content-Type: text/plain; charset="UTF-8"';
