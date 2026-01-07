@@ -2,6 +2,7 @@
 <h1>送信</h1>
 
 <form method="post" action="/send/confirm" class="form">
+  <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrf_token()) ?>">
   <?php if ($t): ?>
     <input type="hidden" name="template_id" value="<?=htmlspecialchars((string)$t['id'])?>">
     <div class="card">
