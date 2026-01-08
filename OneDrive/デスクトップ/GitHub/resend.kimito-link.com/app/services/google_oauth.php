@@ -171,3 +171,14 @@ function google_userinfo($accessToken) {
   $data = json_decode($resp['body'], true) ?: [];
   return [$resp, $data];
 }
+/**
+ * アクセストークンの情報を取得（スコープ確認用）
+ * 
+ * @param string $accessToken アクセストークン（平文）
+ * @return array [$resp, $data] レスポンスとデコード済みデータ
+ */
+function google_tokeninfo($accessToken) {
+  $resp = http_get('https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=' . urlencode($accessToken));
+  $data = json_decode($resp['body'], true) ?: [];
+  return [$resp, $data];
+}

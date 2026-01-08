@@ -789,7 +789,8 @@ route('GET', '/auth/callback', function() use ($config, $storage) {
     'access_token_enc' => encrypt_str($access, $config['APP_KEY']),
     'refresh_token_enc' => $refresh ? encrypt_str($refresh, $config['APP_KEY']) : null,
     'expires_at' => date('Y-m-d H:i:s', time() + $expiresIn),
-    'scopes' => $config['GMAIL_SCOPE'],
+    // ★ 修正: 実際に要求したスコープを保存（補助情報として）
+    'scopes' => trim($config['GOOGLE_SCOPES'] . ' ' . $config['GMAIL_SCOPE']),
     ];
     $storage->saveToken($userId, $tokenRow);
 
@@ -1049,12 +1050,44 @@ route('POST', '/send/execute', function() use ($storage, $config) {
 
   // トークン取得（期限切れが近ければ自動refresh）
   require_once __DIR__ . '/../app/services/token_manager.php';
+  require_once __DIR__ . '/../app/services/google_oauth.php'; // tokeninfo用
   try {
     $access = get_google_access_token_or_refresh($storage, $config, (int)$u['id']);
   } catch (RuntimeException $e) {
     error_log('Token refresh failed in /send/execute: ' . $e->getMessage());
     header('Location: /auth/login?reauth=1');
     exit;
+  }
+  
+  // ★ トークンスコープ検査（403対策）
+  $tokenPreview = substr($access, 0, 10) . '...';
+  [$tokenInfoResp, $tokenInfoData] = google_tokeninfo($access);
+  $tokenInfoCode = (int)($tokenInfoResp['code'] ?? 0);
+  
+  if ($tokenInfoCode === 200 && isset($tokenInfoData['scope'])) {
+    $actualScopes = explode(' ', $tokenInfoData['scope']);
+    $requiredScope = 'https://www.googleapis.com/auth/gmail.send';
+    $hasGmailSend = false;
+    foreach ($actualScopes as $scope) {
+      if ($scope === $requiredScope) {
+        $hasGmailSend = true;
+        break;
+      }
+    }
+    
+    if (!$hasGmailSend) {
+      error_log(sprintf(
+        'Gmail 403 Prevention: Token missing gmail.send scope. token_preview=%s | actual_scopes=%s | user_id=%d',
+        $tokenPreview,
+        $tokenInfoData['scope'],
+        (int)$u['id']
+      ));
+      header('Location: /auth/login?reauth=1');
+      exit;
+    }
+  } else {
+    // tokeninfo取得失敗は警告のみ（続行）
+    error_log('Tokeninfo check failed (HTTP ' . $tokenInfoCode . '), continuing anyway. token_preview=' . $tokenPreview);
   }
 
   $to = $g['to'] ?? (json_decode($g['to_json'] ?? '[]', true) ?: []);
@@ -1096,17 +1129,51 @@ route('POST', '/send/execute', function() use ($storage, $config) {
     }
   }
   
-  // 403（権限不足）の場合は再試行不要、再認証へ誘導
+  // 403（権限不足）の場合は再試行不要、詳細ログを出力して再認証へ誘導
   if ($httpCode === 403) {
+    // エラーレスポンスの詳細を解析
+    $errorBody = mb_substr($sResp['body'] ?? '', 0, 2000);
+    $errorReason = '';
+    $errorMessage = '権限が不足しています';
+    $googleErrorData = null;
+    
+    if (is_array($sData) && isset($sData['error'])) {
+      $googleErrorData = $sData['error'];
+      $errorReason = $googleErrorData['errors'][0]['reason'] ?? '';
+      $errorMessage = $googleErrorData['message'] ?? $errorMessage;
+      
+      // insufficientPermissions の場合は明確に再認証が必要
+      if ($errorReason === 'insufficientPermissions') {
+        error_log(sprintf(
+          'Gmail 403: insufficientPermissions detected. token_preview=%s | user_id=%d | message=%s',
+          $tokenPreview,
+          (int)$u['id'],
+          $errorMessage
+        ));
+      }
+    }
+    
+    // 詳細ログ出力
+    error_log(sprintf(
+      'Gmail 403 Error Details: reason=%s | message=%s | token_preview=%s | user_id=%d | body_preview=%s',
+      $errorReason,
+      $errorMessage,
+      $tokenPreview,
+      (int)$u['id'],
+      $errorBody
+    ));
+    
     $status = 'failed';
     $error = [
       'http_code' => 403,
       'google_error' => [
-        'message' => '権限が不足しています',
+        'message' => $errorMessage,
         'status' => 'PERMISSION_DENIED',
+        'reason' => $errorReason,
       ],
       'when' => date('c'),
     ];
+    
     // 送信先の件数を計算
     $toCount = count($to);
     $ccCount = count($cc);
@@ -1125,7 +1192,13 @@ route('POST', '/send/execute', function() use ($storage, $config) {
       'error'=>$error,
       'gmail_message_id'=>null,
     ]);
-    render_error('権限が不足しています。再ログインしてください。');
+    
+    // エラーメッセージを改善（reasonがある場合は含める）
+    $userMessage = '権限が不足しています。再ログインしてください。';
+    if ($errorReason === 'insufficientPermissions') {
+      $userMessage = 'Gmail送信権限が不足しています。再ログインして権限を承認してください。';
+    }
+    render_error($userMessage);
     return;
   }
   

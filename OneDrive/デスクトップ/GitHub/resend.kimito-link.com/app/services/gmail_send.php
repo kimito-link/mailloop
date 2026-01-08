@@ -44,5 +44,27 @@ function gmail_send_message(string $accessToken, array $mail): array {
     'Authorization: Bearer ' . $accessToken
   ]);
   $data = json_decode($resp['body'], true) ?: [];
+  
+  // エラー時（4xx/5xx）のログ出力
+  $httpCode = (int)($resp['code'] ?? 0);
+  if ($httpCode >= 400) {
+    $tokenPreview = substr($accessToken, 0, 10) . '...';
+    $errorBody = mb_substr($resp['body'] ?? '', 0, 2000);
+    $errorReason = '';
+    $errorMessage = '';
+    if (is_array($data) && isset($data['error'])) {
+      $errorReason = $data['error']['errors'][0]['reason'] ?? '';
+      $errorMessage = $data['error']['message'] ?? '';
+    }
+    error_log(sprintf(
+      'Gmail API Error: HTTP %d | reason=%s | message=%s | token_preview=%s | body_preview=%s',
+      $httpCode,
+      $errorReason,
+      $errorMessage,
+      $tokenPreview,
+      $errorBody
+    ));
+  }
+  
   return [$resp, $data];
 }
