@@ -28,8 +28,8 @@ $q = function($sql) use ($pdo) {
   return $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : null;
 };
 
-echo "\n-- SELECT DATABASE(), @@hostname, VERSION(), CURRENT_USER()\n";
-print_r($q("SELECT DATABASE() AS db, @@hostname AS host, VERSION() AS ver, CURRENT_USER() AS current_user"));
+echo "\n-- SELECT DATABASE(), @@hostname, VERSION(), CURRENT_USER\n";
+print_r($q("SELECT DATABASE() AS db, @@hostname AS host, VERSION() AS ver, CURRENT_USER AS current_user"));
 
 echo "\n-- SHOW TABLES LIKE 'users'\n";
 print_r($q("SHOW TABLES LIKE 'users'"));

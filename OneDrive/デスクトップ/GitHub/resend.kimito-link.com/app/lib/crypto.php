@@ -1,5 +1,5 @@
 <?php
-declare(strict_types=1);
+// declare(strict_types=1); // XserverのPHPバージョンが古いためコメントアウト
 
 function crypto_key(string $appKey): string {
   return hash('sha256', $appKey, true); // 32 bytes

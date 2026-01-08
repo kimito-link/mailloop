@@ -1,5 +1,18 @@
 -- MailLoop MySQL schema (MVP)
 
+CREATE TABLE IF NOT EXISTS users (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  provider VARCHAR(20) NOT NULL,
+  provider_sub VARCHAR(255) NOT NULL,
+  email VARCHAR(255) NULL,
+  name VARCHAR(255) NULL,
+  picture TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_provider_sub (provider, provider_sub),
+  UNIQUE KEY uq_email (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS oauth_tokens (
   user_id INT NOT NULL,
   provider VARCHAR(20) NOT NULL,
@@ -49,6 +62,9 @@ CREATE TABLE IF NOT EXISTS send_logs (
   status VARCHAR(20) NOT NULL,
   error_json JSON NULL,
   gmail_message_id VARCHAR(255) NULL,
+  send_attempt_id CHAR(36) NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_user_created (user_id, created_at)
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_user_created (user_id, created_at),
+  UNIQUE KEY uq_send_attempt (send_attempt_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

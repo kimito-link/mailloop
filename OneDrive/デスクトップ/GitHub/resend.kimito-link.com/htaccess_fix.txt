@@ -1,0 +1,6 @@
+# resend.kimito-link.com 配下のPHPファイルを許可（シンボリックリンク先）
+# この設定は「PHPファイルの実行を制限」の前に配置する必要があります
+<FilesMatch "resend\.kimito-link\.com/.*\.php$">
+    Order Allow,Deny
+    Allow from all
+</FilesMatch>

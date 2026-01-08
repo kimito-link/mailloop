@@ -1,0 +1,4 @@
+# resend.kimito-link.com 配下のPHPファイルを許可（RewriteRuleで除外）
+# この設定は「PHPファイルの実行を制限」の前に配置
+RewriteCond %{REQUEST_URI} ^/resend\.kimito-link\.com/
+RewriteRule ^resend\.kimito-link\.com/.*\.php$ - [L]

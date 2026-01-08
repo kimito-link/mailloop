@@ -1,5 +1,5 @@
 <?php
-declare(strict_types=1);
+// declare(strict_types=1); // XserverのPHPバージョンが古いためコメントアウト
 
 function parse_email_list(string $raw): array {
   $raw = str_replace(["，","；","　"], [",",";"," "], $raw);

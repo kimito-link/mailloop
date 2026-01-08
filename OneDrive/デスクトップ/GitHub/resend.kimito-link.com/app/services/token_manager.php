@@ -1,5 +1,5 @@
 <?php
-declare(strict_types=1);
+// declare(strict_types=1); // XserverのPHPバージョンが古いためコメントアウト
 
 require_once __DIR__ . '/google_oauth.php'; // google_refresh_token()
 require_once __DIR__ . '/../lib/crypto.php'; // encrypt_str / decrypt_str
@@ -43,6 +43,29 @@ function get_google_access_token_or_refresh($storage, array $config, int $userId
 
   if (!$needsRefresh) {
     return $access;
+  }
+
+  // refresh競合対策：updated_at が30秒以内なら、もう一度getTokenして返す（他プロセスがrefresh済みの可能性）
+  // さらに expires_at で二段判定（再取得したtokenのexpires_atが十分未来なら採用）
+  $updatedAtStr = $tokRow['updated_at'] ?? '';
+  if ($updatedAtStr !== '') {
+    $updatedAt = strtotime($updatedAtStr);
+    if ($updatedAt > 0 && ($now - $updatedAt) < 30) {
+      // 30秒以内に更新されているので、再取得して返す
+      $tokRow2 = $storage->getToken($userId);
+      if ($tokRow2 && !empty($tokRow2['access_token_enc'])) {
+        // expires_at で二段判定：再取得したtokenのexpires_atが十分未来なら採用
+        $expiresAtStr2 = $tokRow2['expires_at'] ?? '';
+        $expiresAt2 = $expiresAtStr2 !== '' ? strtotime($expiresAtStr2) : 0;
+        if ($expiresAt2 > 0 && ($expiresAt2 - $now) > $skewSeconds) {
+          // 十分未来のexpires_atなので、このtokenを採用
+          $access2 = decrypt_str($tokRow2['access_token_enc'], $config['APP_KEY']);
+          if ($access2 !== '') {
+            return $access2;
+          }
+        }
+      }
+    }
   }
 
   // refresh_token が無い場合は再認証が必要

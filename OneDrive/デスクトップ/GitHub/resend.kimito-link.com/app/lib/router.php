@@ -1,5 +1,5 @@
 <?php
-declare(strict_types=1);
+// declare(strict_types=1); // XserverのPHPバージョンが古いためコメントアウト
 
 function route(string $method, string $path, callable $handler) {
   static $routes = [];

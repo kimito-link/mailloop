@@ -1,5 +1,5 @@
 <?php
-declare(strict_types=1);
+// declare(strict_types=1); // XserverのPHPバージョンが古いためコメントアウト
 
 function http_post_form(string $url, array $fields, array $headers = []): array {
   $ch = curl_init($url);

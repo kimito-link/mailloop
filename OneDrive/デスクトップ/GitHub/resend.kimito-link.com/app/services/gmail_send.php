@@ -2,11 +2,27 @@
 // declare(strict_types=1); // XserverのPHPバージョンが古いためコメントアウト
 
 // base64url_encode()はgoogle_oauth.phpで定義されているため、ここでは定義しない
-function extract_emails(array $list): array {
-  return array_map(function($item) {
-    if (is_array($item)) return $item['email'] ?? '';
-    return (string)$item;
-  }, $list);
+function extract_emails($list): array {
+  if (empty($list)) return [];
+  // 単一の文字列やnullが渡された場合
+  if (!is_array($list)) return [(string)$list];
+  
+  // 単一の連想配列（['email' => '...']）が渡された場合
+  if (isset($list['email']) && !is_array($list['email'])) {
+    return [(string)$list['email']];
+  }
+  
+  $emails = [];
+  foreach ($list as $item) {
+    if (is_array($item)) {
+      if (isset($item['email']) && !is_array($item['email'])) {
+        $emails[] = (string)$item['email'];
+      }
+    } elseif (!is_null($item) && (string)$item !== '') {
+      $emails[] = (string)$item;
+    }
+  }
+  return array_values(array_unique($emails));
 }
 
 function build_rfc822(array $mail): string {

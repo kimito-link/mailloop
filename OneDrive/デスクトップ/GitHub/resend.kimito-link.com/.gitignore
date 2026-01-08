@@ -6,6 +6,10 @@ config/secrets.php
 *.tmp
 php-error.log
 
+# セッションとログファイル
+storage/sessions/
+storage/*.log
+
 # OS固有ファイル
 .DS_Store
 Thumbs.db

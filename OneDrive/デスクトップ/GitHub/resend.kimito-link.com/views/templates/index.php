@@ -22,6 +22,7 @@
           <a class="btn" href="/send?template_id=<?=urlencode((string)$t['id'])?>">送信</a>
           <a class="btn" href="/templates/edit?id=<?=urlencode((string)$t['id'])?>">編集</a>
           <form method="post" action="/templates/delete" onsubmit="return confirm('削除しますか？')" style="display:inline">
+            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrf_token()) ?>">
             <input type="hidden" name="id" value="<?=htmlspecialchars((string)$t['id'])?>">
             <button class="btn danger" type="submit">削除</button>
           </form>

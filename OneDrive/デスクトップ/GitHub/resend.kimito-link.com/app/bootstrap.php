@@ -1,17 +1,79 @@
 <?php
-declare(strict_types=1);
+// declare(strict_types=1); // XserverのPHPバージョンが古いためコメントアウト
+
+// Fatal errorをログに記録（ファイル書き込み失敗でもerror_logだけは残す）
+register_shutdown_function(function() {
+  $error = error_get_last();
+  if ($error !== null && in_array($error['type'], [E_ERROR, E_CORE_ERROR, E_COMPILE_ERROR, E_PARSE])) {
+    error_log('MailLoop FATAL: ' . $error['message'] . ' in ' . $error['file'] . ':' . $error['line']);
+  }
+});
 
 $config = require __DIR__ . '/../config/config.php';
 
 date_default_timezone_set('Asia/Tokyo');
+
+// ログ出力先をアプリ専用ファイルに設定
+ini_set('log_errors', '1');
+$logDir = __DIR__ . '/../storage';
+if (!is_dir($logDir)) {
+  @mkdir($logDir, 0755, true);
+}
+ini_set('error_log', $logDir . '/app_error.log');
+
+// アプリ専用デバッグログ関数（確実に書ける版）
+function app_log($msg) {
+  $line = '[' . date('c') . '] ' . $msg . "\n";
+  // 1) まず /tmp に書く（ほぼ確実に書ける）
+  $tmpDir = sys_get_temp_dir();
+  $tmp = $tmpDir . '/mailloop_debug.log';
+  // ディレクトリが存在し、書き込み可能な場合のみ
+  if (is_dir($tmpDir) && is_writable($tmpDir)) {
+    @file_put_contents($tmp, $line, FILE_APPEND);
+  }
+  
+  // 2) ホームディレクトリにも書く（フォールバック）
+  $homeLog = getenv('HOME') . '/mailloop_debug.log';
+  if ($homeLog && is_writable(dirname($homeLog))) {
+    @file_put_contents($homeLog, $line, FILE_APPEND);
+  }
+
+  // 3) 可能なら storage にも書く（書ければ嬉しい）
+  $logDir = __DIR__ . '/../storage';
+  $logFile = $logDir . '/app_debug.log';
+  if (is_dir($logDir) && is_writable($logDir)) {
+    @file_put_contents($logFile, $line, FILE_APPEND);
+  }
+  
+  // 4) 最後の手段: error_log（必ず出力される）
+  @error_log('MailLoop: ' . $msg);
+}
+
 session_name('mailloop_session');
-// セッション設定（セキュリティ）
+
+// セッション保存先を /tmp に固定（まずは成功させる）
+$sessionDir = sys_get_temp_dir() . '/mailloop_sessions';
+if (!is_dir($sessionDir)) {
+  @mkdir($sessionDir, 0700, true);
+}
+if (is_dir($sessionDir) && is_writable($sessionDir)) {
+  session_save_path($sessionDir);
+}
+
+session_set_cookie_params([
+  'lifetime' => 0,
+  'path' => '/',
+  'domain' => 'resend.kimito-link.com', // 空より明示の方が事故りにくい
+  'secure' => true,
+  'httponly' => true,
+  'samesite' => 'Lax',
+]);
+
+ini_set('session.use_strict_mode', '0'); // ★まずOFFにして切り分け
+ini_set('session.cookie_secure', '1');
 ini_set('session.cookie_httponly', '1');
-// HTTPS判定（HTTPS時のみsecureを有効化）
-$isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-        || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
-ini_set('session.cookie_secure', $isHttps ? '1' : '0');
-ini_set('session.use_strict_mode', '1');
+ini_set('session.gc_maxlifetime', '3600');
+
 session_start();
 
 // セッションタイムアウト（30分無操作でログアウト）

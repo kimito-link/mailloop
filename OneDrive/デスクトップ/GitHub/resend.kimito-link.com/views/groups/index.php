@@ -25,6 +25,7 @@
         <div class="card-actions">
           <a class="btn" href="/groups/edit?id=<?=urlencode((string)$g['id'])?>">編集</a>
           <form method="post" action="/groups/delete" onsubmit="return confirm('削除しますか？')" style="display:inline">
+            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrf_token()) ?>">
             <input type="hidden" name="id" value="<?=htmlspecialchars((string)$g['id'])?>">
             <button class="btn danger" type="submit">削除</button>
           </form>
