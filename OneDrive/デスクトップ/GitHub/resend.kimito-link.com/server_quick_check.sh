@@ -32,4 +32,9 @@ head -10 app/lib/db.php | grep -E "declare|function db_pdo"
 
 echo ""
 echo "=== OPcacheクリア ==="
-php public/clear_cache.php 2>&1 || echo "clear_cache.phpが実行できませんでした"
+if [ -f "bin/php" ]; then
+    bin/php public/clear_cache.php 2>&1 || echo "clear_cache.phpが実行できませんでした"
+else
+    # フォールバック: bin/phpが存在しない場合は従来の方法
+    php public/clear_cache.php 2>&1 || echo "clear_cache.phpが実行できませんでした"
+fi

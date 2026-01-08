@@ -1,0 +1,58 @@
+#!/bin/bash
+# PHP実行環境統一方針: 固定されたPHPバージョンを使用するラッパースクリプト
+# 
+# 使用方法:
+#   bin/php script.php
+#   または
+#   ./bin/php script.php
+#
+# このスクリプトは、Web実行とCLI実行でPHPバージョン差が出ないよう、
+# プロジェクト側で使用するPHPを固定します。
+
+set -e
+
+# プロジェクトルートの取得（このスクリプトの場所から）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# PHPバージョンの固定
+# XServer Businessの場合、WebサーバーはPHP 8.3.21を使用
+# 利用可能なPHPバージョンを順に確認
+PHP_CANDIDATES=(
+    "/usr/bin/php8.3"
+    "/usr/bin/php83"
+    "/usr/local/bin/php8.3"
+    "/usr/local/bin/php83"
+    "/opt/php83/bin/php"
+    "/usr/bin/php"  # フォールバック（最後の手段）
+)
+
+PHP_BIN=""
+for candidate in "${PHP_CANDIDATES[@]}"; do
+    if [ -x "$candidate" ]; then
+        # バージョン確認（8.3系であることを確認）
+        VERSION_OUTPUT=$("$candidate" -v 2>&1 | head -1)
+        if echo "$VERSION_OUTPUT" | grep -qE "PHP 8\.[0-9]"; then
+            PHP_BIN="$candidate"
+            break
+        fi
+    fi
+done
+
+# PHPが見つからない場合のエラーハンドリング
+if [ -z "$PHP_BIN" ]; then
+    echo "エラー: PHP 8.3系が見つかりませんでした。" >&2
+    echo "利用可能なPHPを確認してください:" >&2
+    which -a php php8.3 php83 2>/dev/null || echo "  (phpコマンドが見つかりません)" >&2
+    exit 1
+fi
+
+# 実行環境情報をログ出力（デバッグ用、環境変数で制御可能）
+if [ "${DEBUG_PHP_WRAPPER:-}" = "1" ]; then
+    echo "[PHP Wrapper] Using: $PHP_BIN" >&2
+    echo "[PHP Wrapper] Version: $($PHP_BIN -v | head -1)" >&2
+    echo "[PHP Wrapper] Project Root: $PROJECT_ROOT" >&2
+fi
+
+# PHPスクリプトを実行
+exec "$PHP_BIN" "$@"
