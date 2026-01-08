@@ -2,27 +2,66 @@
 // declare(strict_types=1); // XserverのPHPバージョンが古いためコメントアウト
 
 // base64url_encode()はgoogle_oauth.phpで定義されているため、ここでは定義しない
+
+/**
+ * 宛先リストからメールアドレスを抽出する関数
+ * 
+ * 以下の形式に対応：
+ * - 文字列: 'email@example.com'
+ * - 文字列の配列: ['email1@example.com', 'email2@example.com']
+ * - 連想配列の配列: [{'email': 'email1@example.com', 'name': ''}, {'email': 'email2@example.com', 'name': ''}]
+ * - 単一の連想配列: {'email': 'email@example.com', 'name': ''}
+ * - ネストされた配列（再帰的処理）
+ * 
+ * @param mixed $list 宛先リスト（文字列、配列、連想配列など）
+ * @return array 抽出されたメールアドレスの配列（重複除去済み）
+ */
 function extract_emails($list): array {
   if (empty($list)) return [];
-  // 単一の文字列やnullが渡された場合
-  if (!is_array($list)) return [(string)$list];
   
-  // 単一の連想配列（['email' => '...']）が渡された場合
-  if (isset($list['email']) && !is_array($list['email'])) {
-    return [(string)$list['email']];
+  // 単一の文字列やnullが渡された場合
+  if (!is_array($list)) {
+    $email = trim((string)$list);
+    return $email !== '' ? [$email] : [];
   }
   
+  // 単一の連想配列（['email' => '...']）が渡された場合
+  // 数値キーでない配列（連想配列）の場合
+  if (isset($list['email']) && !is_array($list['email'])) {
+    $email = trim((string)$list['email']);
+    return $email !== '' ? [$email] : [];
+  }
+  
+  // 配列の場合（[{'email': '...'}, ...] または ['email1@...', 'email2@...']）
   $emails = [];
   foreach ($list as $item) {
     if (is_array($item)) {
+      // 連想配列の場合、'email'キーからメールアドレスを抽出
+      // 例: {'email': 'user@example.com', 'name': 'User Name'}
       if (isset($item['email']) && !is_array($item['email'])) {
-        $emails[] = (string)$item['email'];
+        $email = trim((string)$item['email']);
+        if ($email !== '') {
+          $emails[] = $email;
+        }
       }
-    } elseif (!is_null($item) && (string)$item !== '') {
-      $emails[] = (string)$item;
+      // 'email'キーがない場合、配列の値から直接メールアドレスを探す（再帰的処理）
+      // ネストされた配列構造に対応
+      else {
+        $nestedEmails = extract_emails($item);
+        $emails = array_merge($emails, $nestedEmails);
+      }
+    } elseif (!is_null($item)) {
+      // 文字列の配列の場合（例: ['email1@example.com', 'email2@example.com']）
+      $email = trim((string)$item);
+      if ($email !== '') {
+        $emails[] = $email;
+      }
     }
   }
-  return array_values(array_unique($emails));
+  // 空の文字列を除外し、重複を削除して返す
+  return array_values(array_unique(array_filter($emails, function($email) {
+    return $email !== '';
+  })));
 }
 
 function build_rfc822(array $mail): string {
