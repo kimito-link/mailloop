@@ -831,6 +831,11 @@ route('GET', '/auth/callback', function() use ($config, $storage) {
   }
 });
 
+route('GET', '/auth/logout', function() {
+  // GETメソッドでもログアウト可能（直接アクセス用）
+  session_destroy();
+  header('Location: /auth/login'); exit;
+});
 route('POST', '/auth/logout', function() {
   // CSRF検証（ログアウトも保護）
   if (!csrf_verify()) {
