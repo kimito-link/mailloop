@@ -26,7 +26,8 @@ function extract_emails($list): array {
   }
   
   // 単一の連想配列（['email' => '...']）が渡された場合
-  // 数値キーでない配列（連想配列）の場合
+  // 'email'キーが存在し、その値が配列でない場合（連想配列として扱う）
+  // 数値キーの配列（[0, 1, 2...]）の場合は、'email'キーは存在しないので、この条件はfalseになる
   if (isset($list['email']) && !is_array($list['email'])) {
     $email = trim((string)$list['email']);
     return $email !== '' ? [$email] : [];
