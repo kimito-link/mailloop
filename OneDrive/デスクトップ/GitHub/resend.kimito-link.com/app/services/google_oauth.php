@@ -108,8 +108,29 @@ function oauth_verify_state($config, $state, $server, &$errMsg = null) {
   return true;
 }
 
-function google_auth_url($config, $state) {
+function google_auth_url($config, $state, $forceReauth = false) {
   $scopes = trim($config['GOOGLE_SCOPES'] . ' ' . $config['GMAIL_SCOPE']);
+
+  // 再認証時は prompt=consent を強制、それ以外は select_account（アカウント選択を明示）
+  // consentを強制し続けると、ユーザーが承認済みでも毎回同意画面が出てループの原因になることがある
+  $prompt = $forceReauth ? 'consent' : 'select_account';
+  
+  // スコープ要求のログ（デバッグ用）
+  if (function_exists('app_log')) {
+    app_log(sprintf(
+      'OAuth URL generation: scopes=%s | forceReauth=%s | prompt=%s',
+      $scopes,
+      $forceReauth ? 'true' : 'false',
+      $prompt
+    ));
+  } else {
+    error_log(sprintf(
+      'MailLoop OAuth: scopes=%s | forceReauth=%s | prompt=%s',
+      $scopes,
+      $forceReauth ? 'true' : 'false',
+      $prompt
+    ));
+  }
 
   $params = array(
     'client_id' => $config['GOOGLE_CLIENT_ID'],
@@ -117,9 +138,14 @@ function google_auth_url($config, $state) {
     'response_type' => 'code',
     'scope' => $scopes,
     'access_type' => 'offline',
-    'prompt' => 'consent',
+    'prompt' => $prompt,
     'state' => $state,
   );
+  
+  // login_hint があれば追加（アカウント選択をスキップまたはデフォルト選択）
+  if (isset($_GET['login_hint'])) {
+    $params['login_hint'] = $_GET['login_hint'];
+  }
 
   // 互換性重視のクエリ組み立て（PHP古め対策）
   $pairs = array();
