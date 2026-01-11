@@ -805,6 +805,8 @@ route('GET', '/auth/callback', function() use ($config, $storage) {
     session_regenerate_id(true);
     $_SESSION['user_id'] = $userId;
     $_SESSION['user'] = $user;
+    // CSRF再生成（セッション保存前に設定）
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
     
     // セッション保存を確実にする
     error_log('CALLBACK: Before session save | user_id=' . $userId . ' | user_keys=' . implode(',', array_keys($user)) . ' | session_id=' . session_id());
@@ -812,10 +814,7 @@ route('GET', '/auth/callback', function() use ($config, $storage) {
     session_start();
     error_log('CALLBACK: After session save | session_user_id=' . ($_SESSION['user_id'] ?? 'MISSING') . ' | session_user_keys=' . (isset($_SESSION['user']) ? implode(',', array_keys($_SESSION['user'])) : 'NO_USER'));
 
-    // 9) CSRF再生成
-    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-
-    // 10) リダイレクト
+    // 10) リダイレクト（セッションは既に保存済み）
     header('Location: /templates');
     exit;
   } catch (Throwable $e) {
