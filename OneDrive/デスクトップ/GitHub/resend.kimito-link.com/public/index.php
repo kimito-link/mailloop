@@ -70,12 +70,16 @@ function render_view(string $viewName, array $vars = []) {
   require __DIR__ . '/../views/layout.php';
 }
 function require_login($storage) {
+  error_log('MailLoop Debug: require_login called | session_id=' . session_id() . ' | session_keys=' . implode(',', array_keys($_SESSION ?? [])));
   $u = $storage->getUser();
   if (!$u) {
+    error_log('MailLoop Debug: require_login getUser result: user not found, redirecting to login | session_user=' . (isset($_SESSION['user']) ? 'exists' : 'missing'));
     header('Location: /auth/login'); exit;
   }
+  error_log('MailLoop Debug: require_login getUser result: user found, id=' . (isset($u['id']) ? (int)$u['id'] : 'missing') . ' | session_user_id=' . (isset($_SESSION['user']['id']) ? (int)$_SESSION['user']['id'] : 'missing'));
   // idが存在することを確認
   if (!isset($u['id'])) {
+    error_log('MailLoop Debug: require_login user missing id, redirecting to login. user=' . print_r($u, true) . ' | session_user=' . print_r($_SESSION['user'] ?? null, true));
     error_log('require_login: user array missing id. user=' . print_r($u, true));
     // セッションをクリアして再ログインを促す
     session_unset();
@@ -83,6 +87,7 @@ function require_login($storage) {
     header('Location: /auth/login?error=session_invalid');
     exit;
   }
+  error_log('MailLoop Debug: require_login about to return, user_id=' . (int)$u['id'] . ', user_keys=' . implode(', ', array_keys($u)));
   return $u;
 }
 
@@ -396,9 +401,11 @@ route('GET', '/auth/login', function() use ($config) {
     return;
   }
   
-  $url = google_auth_url($config, $state);
+  // reauth=1 が渡された場合は再認証を強制
+  $forceReauth = isset($_GET['reauth']) && $_GET['reauth'] === '1';
+  $url = google_auth_url($config, $state, $forceReauth);
   if (function_exists('app_log')) {
-    app_log('LOGIN: redirect to Google with state (first 16 chars: ' . substr($state, 0, 16) . ')');
+    app_log('LOGIN: redirect to Google with state (first 16 chars: ' . substr($state, 0, 16) . ')' . ($forceReauth ? ' [FORCE_REAUTH]' : ''));
   }
   
   header('Location: ' . $url);
@@ -798,6 +805,12 @@ route('GET', '/auth/callback', function() use ($config, $storage) {
     session_regenerate_id(true);
     $_SESSION['user_id'] = $userId;
     $_SESSION['user'] = $user;
+    
+    // セッション保存を確実にする
+    error_log('CALLBACK: Before session save | user_id=' . $userId . ' | user_keys=' . implode(',', array_keys($user)) . ' | session_id=' . session_id());
+    session_write_close();
+    session_start();
+    error_log('CALLBACK: After session save | session_user_id=' . ($_SESSION['user_id'] ?? 'MISSING') . ' | session_user_keys=' . (isset($_SESSION['user']) ? implode(',', array_keys($_SESSION['user'])) : 'NO_USER'));
 
     // 9) CSRF再生成
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
@@ -1029,10 +1042,14 @@ route('POST', '/send/confirm', function() use ($storage, $config) {
   render_view('send/confirm', ['user'=>$u,'t'=>$t,'g'=>$g,'subject'=>$subject,'body'=>$body,'counts'=>$counts,'warnings'=>$warnings,'page'=>'send']);
 });
 route('POST', '/send/execute', function() use ($storage, $config) {
+  error_log('MailLoop Debug: /send/execute called');
   $u=require_login($storage);
+  error_log('MailLoop Debug: /send/execute after require_login, user_id=' . (isset($u['id']) ? (int)$u['id'] : 0));
   if (!csrf_verify()) {
+    error_log('MailLoop Debug: /send/execute CSRF verification failed');
     return;
   }
+  error_log('MailLoop Debug: /send/execute CSRF verification OK, starting send process');
   $template_id=(int)($_POST['template_id']??0);
   $group_id=(int)($_POST['group_id']??0);
   $subject=trim($_POST['subject']??'');
@@ -1063,6 +1080,7 @@ route('POST', '/send/execute', function() use ($storage, $config) {
   $tokenPreview = substr($access, 0, 10) . '...';
   [$tokenInfoResp, $tokenInfoData] = google_tokeninfo($access);
   $tokenInfoCode = (int)($tokenInfoResp['code'] ?? 0);
+  $tokenInfoBody = mb_substr($tokenInfoResp['body'] ?? '', 0, 500);
   
   if ($tokenInfoCode === 200 && isset($tokenInfoData['scope'])) {
     $actualScopes = explode(' ', $tokenInfoData['scope']);
@@ -1085,9 +1103,35 @@ route('POST', '/send/execute', function() use ($storage, $config) {
       header('Location: /auth/login?reauth=1');
       exit;
     }
+    
+    // スコープ確認成功ログ
+    error_log(sprintf(
+      'Token scope check OK: gmail.send scope found. token_preview=%s | user_id=%d',
+      $tokenPreview,
+      (int)$u['id']
+    ));
   } else {
-    // tokeninfo取得失敗は警告のみ（続行）
-    error_log('Tokeninfo check failed (HTTP ' . $tokenInfoCode . '), continuing anyway. token_preview=' . $tokenPreview);
+    // tokeninfo取得失敗時の詳細ログ
+    $errorMessage = '';
+    if (is_array($tokenInfoData) && isset($tokenInfoData['error'])) {
+      $errorMessage = $tokenInfoData['error']['message'] ?? '';
+    }
+    error_log(sprintf(
+      'Tokeninfo check failed: HTTP %d | token_preview=%s | user_id=%d | error_message=%s | body_preview=%s',
+      $tokenInfoCode,
+      $tokenPreview,
+      (int)$u['id'],
+      $errorMessage,
+      $tokenInfoBody
+    ));
+    
+    // tokeninfo取得失敗時は警告のみで続行（実際のGmail API呼び出しで403が発生した場合は、その後のエラーハンドリングで処理）
+    // ただし、401（認証エラー）の場合は即座に再認証へ
+    if ($tokenInfoCode === 401) {
+      error_log('Tokeninfo returned 401, redirecting to reauth. token_preview=' . $tokenPreview);
+      header('Location: /auth/login?reauth=1');
+      exit;
+    }
   }
 
   $to = $g['to'] ?? (json_decode($g['to_json'] ?? '[]', true) ?: []);
@@ -1145,7 +1189,7 @@ route('POST', '/send/execute', function() use ($storage, $config) {
       // insufficientPermissions の場合は明確に再認証が必要
       if ($errorReason === 'insufficientPermissions') {
         error_log(sprintf(
-          'Gmail 403: insufficientPermissions detected. token_preview=%s | user_id=%d | message=%s',
+          'Gmail 403: insufficientPermissions detected. token_preview=%s | user_id=%d | message=%s | This indicates the token does not have the required gmail.send scope.',
           $tokenPreview,
           (int)$u['id'],
           $errorMessage
@@ -1153,13 +1197,20 @@ route('POST', '/send/execute', function() use ($storage, $config) {
       }
     }
     
-    // 詳細ログ出力
+    // トークンスコープ検査の結果を取得（既に実行済み）
+    $tokenInfoScope = '';
+    if (isset($tokenInfoData) && isset($tokenInfoData['scope'])) {
+      $tokenInfoScope = $tokenInfoData['scope'];
+    }
+    
+    // 詳細ログ出力（トークンスコープ情報も含める）
     error_log(sprintf(
-      'Gmail 403 Error Details: reason=%s | message=%s | token_preview=%s | user_id=%d | body_preview=%s',
+      'Gmail 403 Error Details: reason=%s | message=%s | token_preview=%s | user_id=%d | token_scope=%s | body_preview=%s',
       $errorReason,
       $errorMessage,
       $tokenPreview,
       (int)$u['id'],
+      $tokenInfoScope ?: 'unknown',
       $errorBody
     ));
     

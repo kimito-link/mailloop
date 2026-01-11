@@ -51,13 +51,28 @@ function app_log($msg) {
 
 session_name('mailloop_session');
 
-// セッション保存先を /tmp に固定（まずは成功させる）
-$sessionDir = sys_get_temp_dir() . '/mailloop_sessions';
+// セッション保存先を storage/sessions に設定（アプリケーション管理下）
+$sessionDir = __DIR__ . '/../storage/sessions';
 if (!is_dir($sessionDir)) {
-  @mkdir($sessionDir, 0700, true);
+  $mkdirResult = @mkdir($sessionDir, 0700, true);
+  if (!$mkdirResult) {
+    error_log('MailLoop Session: Failed to create session directory: ' . $sessionDir);
+    // フォールバック: /tmp を使用
+    $sessionDir = sys_get_temp_dir() . '/mailloop_sessions';
+    if (!is_dir($sessionDir)) {
+      @mkdir($sessionDir, 0700, true);
+    }
+    error_log('MailLoop Session: Using fallback /tmp session directory: ' . $sessionDir);
+  } else {
+    error_log('MailLoop Session: Created session directory: ' . $sessionDir);
+  }
 }
+
 if (is_dir($sessionDir) && is_writable($sessionDir)) {
   session_save_path($sessionDir);
+  error_log('MailLoop Session: Using session directory: ' . $sessionDir);
+} else {
+  error_log('MailLoop Session: WARNING - Session directory not writable: ' . $sessionDir . ' | exists=' . (is_dir($sessionDir) ? 'yes' : 'no') . ' | writable=' . (is_writable($sessionDir) ? 'yes' : 'no'));
 }
 
 session_set_cookie_params([

@@ -182,8 +182,20 @@ final class MysqlStorage implements Storage {
     return $this->pdo;
   }
   public function getUser(): ?array {
-    if (!isset($_SESSION['user']) || !is_array($_SESSION['user'])) return null;
-    if (!isset($_SESSION['user']['id'])) return null;
+    // デバッグログ: セッション状態を記録
+    error_log('DEBUG getUser: session_id=' . session_id() . ' | has_user=' . (isset($_SESSION['user']) ? 'yes' : 'no'));
+    
+    if (!isset($_SESSION['user']) || !is_array($_SESSION['user'])) {
+      error_log('DEBUG getUser: no user in session or not array');
+      return null;
+    }
+    
+    if (!isset($_SESSION['user']['id'])) {
+      error_log('DEBUG getUser: user exists but missing id | keys=' . implode(',', array_keys($_SESSION['user'])) . ' | json=' . json_encode($_SESSION['user']));
+      return null;
+    }
+    
+    error_log('DEBUG getUser: returning user | id=' . $_SESSION['user']['id'] . ' | email=' . ($_SESSION['user']['email'] ?? 'none'));
     return $_SESSION['user'];
   }
   public function upsertUser(array $u): array {
