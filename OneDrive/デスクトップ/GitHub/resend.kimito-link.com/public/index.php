@@ -1,3 +1,4 @@
+<?php
 // declare(strict_types=1); // XserverのPHPバージョンが古いためコメントアウト
 
 // ★最優先: どのファイルが実行されているか確定（ルーティングより前）
@@ -1000,44 +1001,141 @@ route('POST', '/groups/delete', function() use ($storage) {
 });
 
 // Send flow
-route('GET', '/send', function() use ($storage) {
+// Send Prepare
+route('GET','/send', function() use ($storage){
   $u=require_login($storage);
-  // idが存在することを再確認（念のため）
-  if (!isset($u['id'])) {
-    error_log('/send: user missing id after require_login');
-    header('Location: /auth/login?error=session_invalid');
-    exit;
+  $templates=$storage->listTemplates($u['id']);
+  $groups=$storage->listGroups($u['id']);
+  
+  $t = null;
+  $initial_to = [];
+  $initial_cc = [];
+  $initial_bcc = [];
+
+  // log_id があれば、そのログからデータを復元して初期値にする
+  if (isset($_GET['log_id'])) {
+    $logId = (int)$_GET['log_id'];
+    $log = $storage->getLog($u['id'], $logId);
+    if ($log) {
+      // テンプレートID復元
+      $tid = (int)($log['template_id'] ?? 0);
+      if ($tid) {
+        $t = $storage->getTemplate($u['id'], $tid);
+        // 件名・本文はログ時点のスナップショットで上書き（編集されていた場合のため）
+        if ($t) {
+          $t['subject'] = $log['subject_snapshot'] ?? $t['subject'];
+          $t['body_text'] = $log['body_snapshot'] ?? $t['body_text'];
+        }
+      }
+      
+      // 宛先復元（ログには詳細な宛先リストが残っていない場合が多いが、
+      // グループIDがあればそこから、なければ空。
+      // ※将来的にはログに宛先リストそのものを保存する改修も検討）
+      $gid = (int)($log['group_id'] ?? 0);
+      if ($gid) {
+        $g = $storage->getGroup($u['id'], $gid);
+        if ($g) {
+          $initial_to = $g['to'] ?? (json_decode($g['to_json'] ?? '[]', true) ?: []);
+          $initial_cc = $g['cc'] ?? (json_decode($g['cc_json'] ?? '[]', true) ?: []);
+          $initial_bcc = $g['bcc'] ?? (json_decode($g['bcc_json'] ?? '[]', true) ?: []);
+        }
+      }
+    }
+  } elseif (isset($_GET['template_id'])) {
+    $id=(int)$_GET['template_id'];
+    $t=$storage->getTemplate($u['id'],$id);
   }
-  $userId = (int)$u['id'];
-  $template_id=(int)($_GET['template_id']??0);
-  $t=$template_id ? $storage->getTemplate($userId, $template_id) : null;
-  $groups=$storage->listGroups($userId, '');
-  render_view('send/prepare', ['user'=>$u,'t'=>$t,'groups'=>$groups,'page'=>'send']);
+
+  render_view('send/prepare',[
+    'user'=>$u,
+    'templates'=>$templates,
+    'groups'=>$groups,
+    't'=>$t,
+    'initial_to'=>$initial_to,
+    'initial_cc'=>$initial_cc,
+    'initial_bcc'=>$initial_bcc,
+    'page'=>'send'
+  ]);
 });
-route('POST', '/send/confirm', function() use ($storage, $config) {
+
+// Send Confirm
+route('POST','/send/confirm', function() use ($storage){
   $u=require_login($storage);
-  if (!csrf_verify()) {
-    return;
-  }
+  if(!csrf_verify()){ header('Location:/send'); exit; }
+  
   $template_id=(int)($_POST['template_id']??0);
   $group_id=(int)($_POST['group_id']??0);
+  $subject=trim($_POST['subject']??'');
+  $body=trim($_POST['body_text']??'');
+
+  // 手動入力された宛先リストを取得（カンマ区切り）
+  $parseList = function($str) {
+    if (empty($str)) return [];
+    $arr = explode(',', $str);
+    $res = [];
+    foreach ($arr as $a) {
+      $a = trim($a);
+      if ($a !== '') $res[] = $a;
+    }
+    return $res;
+  };
+
+  $to_list = $parseList($_POST['to_list'] ?? '');
+  $cc_list = $parseList($_POST['cc_list'] ?? '');
+  $bcc_list = $parseList($_POST['bcc_list'] ?? '');
+
+  // グループIDが指定されていても、手動入力があればそちらを優先（またはマージ）
+  // ここでは「手動入力が空ならグループ定義を使う」というロジックにするか、
+  // 「常に手動入力（JSで自動入力済み）を使う」にするか。
+  // UI上、JSで自動入力されるので、基本は手動入力値を正とする。
+  
+  // もしJSが無効などで手動入力が空っぽ、かつグループIDがある場合はグループから引く（フォールバック）
+  if (empty($to_list) && empty($cc_list) && empty($bcc_list) && $group_id) {
+    $g=$storage->getGroup($u['id'],$group_id);
+    if ($g) {
+      $to_list = $g['to'] ?? (json_decode($g['to_json'] ?? '[]', true) ?: []);
+      $cc_list = $g['cc'] ?? (json_decode($g['cc_json'] ?? '[]', true) ?: []);
+      $bcc_list = $g['bcc'] ?? (json_decode($g['bcc_json'] ?? '[]', true) ?: []);
+    }
+  }
+
   $t=$storage->getTemplate($u['id'],$template_id);
-  $g=$storage->getGroup($u['id'],$group_id);
-  if (!$t || !$g) { header('Location: /send'); exit; }
+  // グループ情報は表示用（IDがあれば取得）
+  $g = $group_id ? $storage->getGroup($u['id'],$group_id) : ['id'=>0, 'name'=>'（手動指定）'];
 
-  $subject=trim($_POST['subject'] ?? ($t['subject'] ?? ''));
-  $body=trim($_POST['body_text'] ?? ($t['body_text'] ?? ''));
+  if(!$t){ header('Location:/send'); exit; }
 
-  $to = $g['to'] ?? (json_decode($g['to_json'] ?? '[]', true) ?: []);
-  $cc = $g['cc'] ?? (json_decode($g['cc_json'] ?? '[]', true) ?: []);
-  $bcc = $g['bcc'] ?? (json_decode($g['bcc_json'] ?? '[]', true) ?: []);
+  // プレビュー用にデータを渡す
+  // 宛先リストを配列として渡す
+  $counts = [
+    'to' => count($to_list),
+    'cc' => count($cc_list),
+    'bcc' => count($bcc_list),
+    'total' => count($to_list) + count($cc_list) + count($bcc_list)
+  ];
 
-  $counts=['to'=>count($to),'cc'=>count($cc),'bcc'=>count($bcc),'total'=>count($to)+count($cc)+count($bcc)];
-  $warnings=[];
-  if($counts['bcc'] >= ($config['WARN_BCC_2']??100)) $warnings[]='BCCが多いです（強い注意）';
-  else if($counts['bcc'] >= ($config['WARN_BCC_1']??50)) $warnings[]='BCCが多いです（注意）';
+  // 警告チェック
+  $warnings = [];
+  if ($counts['total'] === 0) {
+    $warnings[] = "宛先が1つも指定されていません。";
+  }
+  if (empty($subject)) {
+    $warnings[] = "件名が空です。";
+  }
 
-  render_view('send/confirm', ['user'=>$u,'t'=>$t,'g'=>$g,'subject'=>$subject,'body'=>$body,'counts'=>$counts,'warnings'=>$warnings,'page'=>'send']);
+  render_view('send/confirm',[
+    'user'=>$u,
+    't'=>$t,
+    'g'=>$g,
+    'subject'=>$subject,
+    'body'=>$body,
+    'to_list'=>$to_list,
+    'cc_list'=>$cc_list,
+    'bcc_list'=>$bcc_list,
+    'counts'=>$counts,
+    'warnings'=>$warnings,
+    'page'=>'send'
+  ]);
 });
 route('POST', '/send/execute', function() use ($storage, $config) {
   error_log('MailLoop Debug: /send/execute called');
@@ -1054,8 +1152,13 @@ route('POST', '/send/execute', function() use ($storage, $config) {
   $body=trim($_POST['body_text']??'');
   $mode=$_POST['mode']??'send';
   $t=$storage->getTemplate($u['id'],$template_id);
-  $g=$storage->getGroup($u['id'],$group_id);
-  if(!$t || !$g){ header('Location: /send'); exit; }
+  // group_id が 0 の場合は手動入力として扱う
+  $g = ($group_id > 0) ? $storage->getGroup($u['id'],$group_id) : ['id'=>0, 'name'=>'手動入力'];
+  
+  if(!$t){
+    error_log('MailLoop Debug: /send/execute template not found: ' . $template_id);
+    header('Location: /send'); exit;
+  }
 
   // send_attempt_id を生成（同一送信試行を識別するため、UUID v4形式）
   $bytes = random_bytes(16);
@@ -1132,9 +1235,28 @@ route('POST', '/send/execute', function() use ($storage, $config) {
     }
   }
 
-  $to = $g['to'] ?? (json_decode($g['to_json'] ?? '[]', true) ?: []);
-  $cc = $g['cc'] ?? (json_decode($g['cc_json'] ?? '[]', true) ?: []);
-  $bcc = $g['bcc'] ?? (json_decode($g['bcc_json'] ?? '[]', true) ?: []);
+  // 手動入力された宛先リストを取得（カンマ区切り）
+  $parseList = function($str) {
+    if (empty($str)) return [];
+    $arr = explode(',', $str);
+    $res = [];
+    foreach ($arr as $a) {
+      $a = trim($a);
+      if ($a !== '') $res[] = $a;
+    }
+    return $res;
+  };
+
+  $to = $parseList($_POST['to_list'] ?? '');
+  $cc = $parseList($_POST['cc_list'] ?? '');
+  $bcc = $parseList($_POST['bcc_list'] ?? '');
+
+  // もし手動入力が空ならグループから（念のためフォールバック）
+  if (empty($to) && empty($cc) && empty($bcc)) {
+    $to = $g['to'] ?? (json_decode($g['to_json'] ?? '[]', true) ?: []);
+    $cc = $g['cc'] ?? (json_decode($g['cc_json'] ?? '[]', true) ?: []);
+    $bcc = $g['bcc'] ?? (json_decode($g['bcc_json'] ?? '[]', true) ?: []);
+  }
 
   if($mode==='test'){ $to=[$u['email']]; $cc=[]; $bcc=[]; }
 
@@ -1311,7 +1433,8 @@ route('POST', '/send/execute', function() use ($storage, $config) {
     'gmail_message_id'=>$sData['id'] ?? null,
   ]);
 
-  header('Location: /logs/view?id=' . $logId);
+  $msg = ($status === 'success') ? '&success=1' : '';
+  header('Location: /logs/view?id=' . $logId . $msg);
   exit;
 });
 

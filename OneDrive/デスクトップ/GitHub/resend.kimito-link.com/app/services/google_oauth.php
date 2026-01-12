@@ -140,6 +140,7 @@ function google_auth_url($config, $state, $forceReauth = false) {
     'access_type' => 'offline',
     'prompt' => $prompt,
     'state' => $state,
+    'include_granted_scopes' => 'true',
   );
   
   // login_hint があれば追加（アカウント選択をスキップまたはデフォルト選択）

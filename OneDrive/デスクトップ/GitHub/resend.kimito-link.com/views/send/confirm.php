@@ -30,6 +30,9 @@
   <input type="hidden" name="group_id" value="<?=htmlspecialchars((string)$g['id'])?>">
   <input type="hidden" name="subject" value="<?=htmlspecialchars($subject)?>">
   <input type="hidden" name="body_text" value="<?=htmlspecialchars($body)?>">
+  <input type="hidden" name="to_list" value="<?=htmlspecialchars(implode(',', $to_list ?? []))?>">
+  <input type="hidden" name="cc_list" value="<?=htmlspecialchars(implode(',', $cc_list ?? []))?>">
+  <input type="hidden" name="bcc_list" value="<?=htmlspecialchars(implode(',', $bcc_list ?? []))?>">
   <input type="hidden" name="mode" value="test">
   <button class="btn" type="submit">テスト送信（自分宛）</button>
 </form>
@@ -40,6 +43,9 @@
   <input type="hidden" name="group_id" value="<?=htmlspecialchars((string)$g['id'])?>">
   <input type="hidden" name="subject" value="<?=htmlspecialchars($subject)?>">
   <input type="hidden" name="body_text" value="<?=htmlspecialchars($body)?>">
+  <input type="hidden" name="to_list" value="<?=htmlspecialchars(implode(',', $to_list ?? []))?>">
+  <input type="hidden" name="cc_list" value="<?=htmlspecialchars(implode(',', $cc_list ?? []))?>">
+  <input type="hidden" name="bcc_list" value="<?=htmlspecialchars(implode(',', $bcc_list ?? []))?>">
   <input type="hidden" name="mode" value="send">
   <button class="btn primary" type="submit">送信する</button>
   <a class="btn" href="/send?template_id=<?=urlencode((string)$t['id'])?>">戻る</a>

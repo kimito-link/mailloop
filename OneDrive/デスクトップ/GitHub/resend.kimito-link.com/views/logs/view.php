@@ -6,6 +6,12 @@ $error = $log['error'] ?? (is_string($err) ? (json_decode($err, true) ?: null) :
 ?>
 <h1>ログ詳細</h1>
 
+<?php if (isset($_GET['success'])): ?>
+  <div class="card" style="background-color: #d4edda; border-color: #c3e6cb; color: #155724; padding: 15px; margin-bottom: 20px;">
+    <strong>送信成功！</strong> メールの送信が完了しました。
+  </div>
+<?php endif; ?>
+
 <div class="card">
   <div class="card-title">ステータス</div>
   <div class="card-sub"><?=htmlspecialchars($log['status'] ?? '')?></div>
@@ -79,4 +85,7 @@ $attemptShort = $attemptId !== '' ? substr($attemptId, 0, 12) . '…' : '';
   </div>
 <?php endif; ?>
 
-<a class="btn" href="/logs">戻る</a>
+<div class="row">
+  <a class="btn primary" href="/send?log_id=<?=htmlspecialchars((string)$log['id'])?>">この内容で再送信（編集）</a>
+  <a class="btn" href="/logs">戻る</a>
+</div>
