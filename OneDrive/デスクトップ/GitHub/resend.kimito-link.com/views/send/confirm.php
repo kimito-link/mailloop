@@ -34,7 +34,7 @@
   <button class="btn" type="submit">テスト送信（自分宛）</button>
 </form>
 
-<form method="post" action="/send/execute" onsubmit="return confirm('この内容で送信します。よろしいですか？')" class="row">
+<form method="post" action="/send/execute" class="row">
   <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrf_token()) ?>">
   <input type="hidden" name="template_id" value="<?=htmlspecialchars((string)$t['id'])?>">
   <input type="hidden" name="group_id" value="<?=htmlspecialchars((string)$g['id'])?>">

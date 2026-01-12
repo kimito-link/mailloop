@@ -290,7 +290,8 @@ final class MysqlStorage implements Storage {
   }
 
   public function saveToken(int $userId, array $token): void {
-    $pdo=$this->requirePdo();
+  error_log('DEBUG saveToken: called for user_id=' . $userId . ' | scopes=' . ($token['scopes'] ?? 'none'));
+  $pdo=$this->requirePdo();
     $stmt=$pdo->prepare("INSERT INTO oauth_tokens (user_id, provider, access_token_enc, refresh_token_enc, expires_at, scopes, created_at, updated_at)
                          VALUES (:uid,'google',:at,:rt,:exp,:sc,NOW(),NOW())
                          ON DUPLICATE KEY UPDATE
