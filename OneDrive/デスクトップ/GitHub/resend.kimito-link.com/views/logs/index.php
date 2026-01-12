@@ -1,6 +1,15 @@
 <?php $view='logs/index'; ?>
 <h1>送信ログ</h1>
 
+<div class="char-bubble" style="border-color: var(--primary);">
+  <img src="/assets/img/characters/link/link-yukkuri-normal-mouth-open.png" alt="りんく">
+  <div class="text">
+    <strong>りんく：</strong><br>
+    「今まで送ったメールの履歴が見れるよ！<br>
+    ログを開いて『再送信』ボタンを押せば、同じ内容でまた送ることもできるんだ！」
+  </div>
+</div>
+
 <?php if (empty($logs)): ?>
   <p class="muted">ログがありません。</p>
 <?php else: ?>

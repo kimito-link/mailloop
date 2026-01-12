@@ -1,6 +1,15 @@
 <?php $view='groups/index'; ?>
 <h1>宛先グループ</h1>
 
+<div class="char-bubble" style="border-color: var(--secondary);">
+  <img src="/assets/img/characters/tanunee/tanuki-yukkuri-normal-mouth-open.png" alt="たぬ姉">
+  <div class="text">
+    <strong>たぬ姉：</strong><br>
+    「送りたい相手のメールアドレスをグループにしておくと便利だよぉ。<br>
+    CCやBCCも一緒に設定できるから、一括送信も楽ちんだねぇ。」
+  </div>
+</div>
+
 <form method="get" action="/groups" class="row">
   <input name="q" value="<?=htmlspecialchars($q??'')?>" placeholder="検索（グループ名）">
   <button class="btn" type="submit">検索</button>

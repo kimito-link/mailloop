@@ -4,7 +4,7 @@
 
 require_once __DIR__ . '/../app/bootstrap.php';
 
-$env = $config['APP_ENV'] ?? 'dev';
+$env = isset($config['APP_ENV']) ? $config['APP_ENV'] : 'dev';
 if ($env === 'prod') {
   http_response_code(403);
   exit;

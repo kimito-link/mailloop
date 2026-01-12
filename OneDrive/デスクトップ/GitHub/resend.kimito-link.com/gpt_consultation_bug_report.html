@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gmail API 403エラー - GPT相談用バグレポート</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', Meiryo, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #d32f2f;
+            border-bottom: 3px solid #d32f2f;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+        h2 {
+            color: #1976d2;
+            margin-top: 30px;
+            margin-bottom: 15px;
+            border-left: 4px solid #1976d2;
+            padding-left: 10px;
+        }
+        h3 {
+            color: #555;
+            margin-top: 20px;
+            margin-bottom: 10px;
+        }
+        .error-box {
+            background: #ffebee;
+            border-left: 4px solid #d32f2f;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        .info-box {
+            background: #e3f2fd;
+            border-left: 4px solid #1976d2;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        .code-block {
+            background: #f5f5f5;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            overflow-x: auto;
+            font-family: 'Courier New', Consolas, monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            margin: 10px 0;
+        }
+        .code-block code {
+            color: #d32f2f;
+        }
+        .file-path {
+            color: #1976d2;
+            font-weight: bold;
+            font-family: monospace;
+        }
+        .line-number {
+            color: #666;
+            font-size: 12px;
+        }
+        ul, ol {
+            margin-left: 20px;
+            margin-top: 10px;
+        }
+        li {
+            margin: 5px 0;
+        }
+        .copy-btn {
+            background: #1976d2;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+        .copy-btn:hover {
+            background: #1565c0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 10px;
+            text-align: left;
+        }
+        th {
+            background: #f5f5f5;
+            font-weight: bold;
+        }
+        .highlight {
+            background: #fff9c4;
+            padding: 2px 4px;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🐛 Gmail API 403エラー - GPT相談用バグレポート</h1>
+        
+        <div class="error-box">
+            <h3>❌ エラー概要</h3>
+            <p><strong>エラーメッセージ:</strong> 「権限が不足しています。再ログインしてください。」</p>
+            <p><strong>HTTPステータスコード:</strong> 403 (PERMISSION_DENIED)</p>
+            <p><strong>発生箇所:</strong> <code>/send/execute</code> エンドポイント</p>
+            <p><strong>発生タイミング:</strong> メール送信ボタンをクリックした際</p>
+        </div>
+
+        <h2>📋 問題の詳細</h2>
+        <div class="info-box">
+            <p>Gmail APIへのメール送信リクエストが403エラー（権限不足）で失敗しています。</p>
+            <p>ユーザーはログイン済みで、アクセストークンも取得できているが、Gmail APIから403が返ってくる状態です。</p>
+        </div>
+
+        <h2>🖥️ 実行環境</h2>
+        <table>
+            <tr>
+                <th>項目</th>
+                <th>値</th>
+            </tr>
+            <tr>
+                <td>サーバー</td>
+                <td>Xサーバー（sv16.sixcore.ne.jp）</td>
+            </tr>
+            <tr>
+                <td>PHPバージョン（Web実行）</td>
+                <td>PHP 8.3.21</td>
+            </tr>
+            <tr>
+                <td>PHPバージョン（CLI実行）</td>
+                <td>不明（Web実行と異なる可能性あり）</td>
+            </tr>
+            <tr>
+                <td>プロジェクトパス</td>
+                <td><code>/home/besttrust/kimito-link.com/_git/mailloop</td>
+            </tr>
+            <tr>
+                <td>URL</td>
+                <td><code>https://resend.kimito-link.com</code></td>
+            </tr>
+        </table>
+
+        <h2>🔍 エラー発生フロー</h2>
+        <ol>
+            <li>ユーザーがログイン済み（セッション有効）</li>
+            <li>テンプレートとグループを選択して送信ボタンをクリック</li>
+            <li><code>POST /send/execute</code> が呼び出される</li>
+            <li><code>get_google_access_token_or_refresh()</code> でアクセストークンを取得（成功）</li>
+            <li><code>gmail_send_message()</code> でGmail APIにリクエスト送信</li>
+            <li><strong>Gmail APIから403エラーが返る</strong></li>
+            <li>エラーメッセージ「権限が不足しています。再ログインしてください。」が表示される</li>
+        </ol>
+
+        <h2>💻 関連コード</h2>
+        
+        <h3>1. 送信処理のメインコード</h3>
+        <p class="file-path">public/index.php (1030-1130行目)</p>
+        <div class="code-block">
+<pre>route('POST', '/send/execute', function() use ($storage, $config) {
+  $u=require_login($storage);
+  if (!csrf_verify()) {
+    return;
+  }
+  // ... 省略 ...
+  
+  // トークン取得（期限切れが近ければ自動refresh）
+  require_once __DIR__ . '/../app/services/token_manager.php';
+  try {
+    $access = get_google_access_token_or_refresh($storage, $config, (int)$u['id']);
+  } catch (RuntimeException $e) {
+    error_log('Token refresh failed in /send/execute: ' . $e->getMessage());
+    header('Location: /auth/login?reauth=1');
+    exit;
+  }
+  
+  // ... メールデータ準備 ...
+  
+  // Gmail送信
+  $sendResult = gmail_send_message($access, $mail);
+  $sResp = $sendResult[0];
+  $sData = $sendResult[1];
+  $httpCode = (int)($sResp['code'] ?? 0);
+  
+  // 401の場合は一度だけrefreshして再試行
+  if ($httpCode === 401) {
+    // ... refresh処理 ...
+  }
+  
+  // 403（権限不足）の場合は再試行不要、再認証へ誘導
+  if ($httpCode === 403) {
+    $status = 'failed';
+    $error = [
+      'http_code' => 403,
+      'google_error' => [
+        'message' => '権限が不足しています',
+        'status' => 'PERMISSION_DENIED',
+      ],
+      'when' => date('c'),
+    ];
+    // ... ログ保存 ...
+    render_error('権限が不足しています。再ログインしてください。');
+    return;
+  }
+});</pre>
+        </div>
+
+        <h3>2. Gmail送信関数</h3>
+        <p class="file-path">app/services/gmail_send.php (40-48行目)</p>
+        <div class="code-block">
+<pre>function gmail_send_message(string $accessToken, array $mail): array {
+  $raw = build_rfc822($mail);
+  $payload = ['raw' => base64url_encode($raw)];
+  $resp = http_post_json('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', $payload, [
+    'Authorization: Bearer ' . $accessToken
+  ]);
+  $data = json_decode($resp['body'], true) ?: [];
+  return [$resp, $data];
+}</pre>
+        </div>
+
+        <h3>3. トークン取得・リフレッシュ関数</h3>
+        <p class="file-path">app/services/token_manager.php (17-102行目)</p>
+        <div class="code-block">
+<pre>function get_google_access_token_or_refresh($storage, array $config, int $userId, int $skewSeconds = 300): string
+{
+  $tokRow = $storage->getToken($userId);
+  if (!$tokRow) {
+    throw new RuntimeException('No token. Please login again.');
+  }
+
+  // 復号
+  $accessEnc = $tokRow['access_token_enc'] ?? '';
+  if ($accessEnc === '') {
+    throw new RuntimeException('Token is broken (missing access token). Please login again.');
+  }
+  $access = decrypt_str($accessEnc, $config['APP_KEY']);
+
+  $refresh = null;
+  if (!empty($tokRow['refresh_token_enc'])) {
+    $refresh = decrypt_str($tokRow['refresh_token_enc'], $config['APP_KEY']);
+  }
+
+  // expires_at 判定
+  $expiresAtStr = $tokRow['expires_at'] ?? '';
+  $expiresAt = $expiresAtStr !== '' ? strtotime($expiresAtStr) : 0;
+  $now = time();
+  $needsRefresh = ($expiresAt <= 0) || ($expiresAt - $now <= $skewSeconds);
+
+  if (!$needsRefresh) {
+    return $access;
+  }
+
+  // refresh_token が無い場合は再認証が必要
+  if (!$refresh) {
+    throw new RuntimeException('Refresh token is missing. Please login again.');
+  }
+
+  // refresh 実行
+  [$resp, $data] = google_refresh_token($config, $refresh);
+  $code = (int)($resp['code'] ?? 0);
+
+  if ($code !== 200 || empty($data['access_token'])) {
+    error_log('Refresh failed: HTTP ' . $code . ' body=' . ($resp['body'] ?? ''));
+    throw new RuntimeException('Token refresh failed. Please login again.');
+  }
+
+  $newAccess = $data['access_token'];
+  $expiresIn = (int)($data['expires_in'] ?? 3500);
+  $newRefresh = $refresh;
+
+  // 保存（暗号化）
+  $tokenRow = [
+    'access_token_enc' => encrypt_str($newAccess, $config['APP_KEY']),
+    'refresh_token_enc' => $newRefresh ? encrypt_str($newRefresh, $config['APP_KEY']) : null,
+    'expires_at' => date('Y-m-d H:i:s', $now + $expiresIn),
+    'scopes' => $tokRow['scopes'] ?? ($config['GMAIL_SCOPE'] ?? ''),
+  ];
+  $storage->saveToken($userId, $tokenRow);
+
+  return $newAccess;
+}</pre>
+        </div>
+
+        <h3>4. OAuth認証URL生成</h3>
+        <p class="file-path">app/services/google_oauth.php (111-145行目)</p>
+        <div class="code-block">
+<pre>function google_auth_url($config, $state) {
+  $scopes = trim($config['GOOGLE_SCOPES'] . ' ' . $config['GMAIL_SCOPE']);
+
+  $params = array(
+    'client_id' => $config['GOOGLE_CLIENT_ID'],
+    'redirect_uri' => $config['GOOGLE_REDIRECT_URI'],
+    'response_type' => 'code',
+    'scope' => $scopes,
+    'access_type' => 'offline',
+    'prompt' => 'consent',
+    'state' => $state,
+  );
+
+  // クエリ組み立て
+  $pairs = array();
+  foreach ($params as $k => $v) {
+    if ($v === null) continue;
+    $pairs[] = rawurlencode($k) . '=' . rawurlencode($v);
+  }
+  $q = implode('&', $pairs);
+
+  $url = 'https://accounts.google.com/o/oauth2/v2/auth?' . $q;
+  
+  return $url;
+}</pre>
+        </div>
+
+        <h3>5. 設定ファイル</h3>
+        <p class="file-path">config/config.php (26-31行目)</p>
+        <div class="code-block">
+<pre>'GOOGLE_CLIENT_ID' => isset($secrets['GOOGLE_CLIENT_ID']) ? $secrets['GOOGLE_CLIENT_ID'] : (getenv('GOOGLE_CLIENT_ID') ?: 'DUMMY_CLIENT_ID'),
+'GOOGLE_CLIENT_SECRET' => isset($secrets['GOOGLE_CLIENT_SECRET']) ? $secrets['GOOGLE_CLIENT_SECRET'] : (getenv('GOOGLE_CLIENT_SECRET') ?: 'DUMMY_CLIENT_SECRET'),
+'GOOGLE_REDIRECT_URI' => 'https://resend.kimito-link.com/auth/callback',
+
+'GOOGLE_SCOPES' => 'openid email profile',
+'GMAIL_SCOPE' => 'https://www.googleapis.com/auth/gmail.send',</pre>
+        </div>
+
+        <h3>6. トークン保存時のスコープ</h3>
+        <p class="file-path">public/index.php (787-794行目)</p>
+        <div class="code-block">
+<pre>// 7) token保存
+$tokenRow = [
+  'access_token_enc' => encrypt_str($access, $config['APP_KEY']),
+  'refresh_token_enc' => $refresh ? encrypt_str($refresh, $config['APP_KEY']) : null,
+  'expires_at' => date('Y-m-d H:i:s', time() + $expiresIn),
+  'scopes' => $config['GMAIL_SCOPE'],  // ← ここでGMAIL_SCOPEのみ保存
+];
+$storage->saveToken($userId, $tokenRow);</pre>
+        </div>
+
+        <h2>🤔 考えられる原因</h2>
+        <ol>
+            <li><strong>OAuthスコープの問題</strong>
+                <ul>
+                    <li>ログイン時に要求したスコープと、実際にトークンに含まれるスコープが一致していない可能性</li>
+                    <li>トークン保存時に <code>$config['GMAIL_SCOPE']</code> のみを保存しているが、実際のトークンには複数スコープが含まれている可能性</li>
+                </ul>
+            </li>
+            <li><strong>Google Cloud Consoleの設定問題</strong>
+                <ul>
+                    <li>OAuth同意画面で <code>https://www.googleapis.com/auth/gmail.send</code> スコープが正しく設定されていない</li>
+                    <li>テストユーザーに自分のアカウントが追加されていない（テスト状態の場合）</li>
+                    <li>Gmail APIが有効になっていない</li>
+                </ul>
+            </li>
+            <li><strong>トークンのスコープ不一致</strong>
+                <ul>
+                    <li>ログイン時に取得したトークンのスコープと、リフレッシュ時に要求しているスコープが異なる</li>
+                    <li>リフレッシュ時に元のスコープが失われている可能性</li>
+                </ul>
+            </li>
+            <li><strong>アクセストークンの有効性</strong>
+                <ul>
+                    <li>アクセストークンは取得できているが、Gmail送信権限が含まれていない</li>
+                    <li>トークンは有効だが、Googleアカウント側で権限が取り消されている</li>
+                </ul>
+            </li>
+        </ol>
+
+        <h2>🔧 確認すべきポイント</h2>
+        <ol>
+            <li><strong>データベースのtokensテーブルを確認</strong>
+                <ul>
+                    <li><code>scopes</code>カラムに保存されている値</li>
+                    <li>実際のトークンに含まれるスコープ（デコードして確認）</li>
+                </ul>
+            </li>
+            <li><strong>Google Cloud Consoleの設定確認</strong>
+                <ul>
+                    <li>OAuth同意画面で <code>https://www.googleapis.com/auth/gmail.send</code> が追加されているか</li>
+                    <li>Gmail APIが有効になっているか</li>
+                    <li>テストユーザーに自分のアカウントが追加されているか</li>
+                </ul>
+            </li>
+            <li><strong>ログイン時のスコープ要求を確認</strong>
+                <ul>
+                    <li><code>google_auth_url()</code> で生成されるURLに正しいスコープが含まれているか</li>
+                    <li>Google認証画面で実際に要求されているスコープ</li>
+                </ul>
+            </li>
+            <li><strong>Gmail APIのレスポンスボディを確認</strong>
+                <ul>
+                    <li>403エラー時の詳細なエラーメッセージ（<code>$sResp['body']</code>）</li>
+                    <li>Google APIからの具体的なエラー理由</li>
+                </ul>
+            </li>
+        </ol>
+
+        <h2>💡 質問事項</h2>
+        <ol>
+            <li>403エラーが発生する前に、正常にメール送信できていた期間はありましたか？</li>
+            <li>Google Cloud ConsoleのOAuth同意画面で、<code>https://www.googleapis.com/auth/gmail.send</code> スコープは追加されていますか？</li>
+            <li>データベースの <code>tokens</code> テーブルの <code>scopes</code> カラムには何が保存されていますか？</li>
+            <li>ログイン時にGoogle認証画面で、どのスコープの承認を求められましたか？</li>
+            <li>Gmail APIの403エラーの詳細なレスポンスボディ（<code>$sResp['body']</code>）は確認できますか？</li>
+            <li>再ログインを試しましたか？その結果はどうでしたか？</li>
+        </ol>
+
+        <h2>📝 補足情報</h2>
+        <div class="info-box">
+            <p><strong>トークン保存時の問題点:</strong></p>
+            <p>ログイン時のトークン保存（<code>public/index.php</code> 792行目）で、<code>'scopes' => $config['GMAIL_SCOPE']</code> としていますが、実際のトークンには複数スコープ（<code>openid email profile https://www.googleapis.com/auth/gmail.send</code>）が含まれている可能性があります。</p>
+            <p>リフレッシュ時（<code>token_manager.php</code> 97行目）では、<code>'scopes' => $tokRow['scopes'] ?? ($config['GMAIL_SCOPE'] ?? '')</code> としているため、保存されているスコープが正しくない場合、リフレッシュ後のトークンにも影響する可能性があります。</p>
+        </div>
+
+        <h2>🎯 期待される解決方法</h2>
+        <ol>
+            <li>ログイン時に取得したトークンの実際のスコープを確認し、それを正しく保存する</li>
+            <li>Google Cloud Consoleの設定を確認し、必要なスコープが正しく設定されているか確認</li>
+            <li>再ログインを試して、新しいトークンで動作するか確認</li>
+            <li>Gmail APIの403エラーの詳細なレスポンスを確認して、具体的な原因を特定</li>
+        </ol>
+
+        <button class="copy-btn" onclick="copyToClipboard()">📋 このページの内容をコピー</button>
+    </div>
+
+    <script>
+        function copyToClipboard() {
+            const text = document.body.innerText;
+            navigator.clipboard.writeText(text).then(() => {
+                alert('コピーしました！');
+            }).catch(err => {
+                console.error('コピーに失敗しました:', err);
+            });
+        }
+    </script>
+</body>
+</html>

@@ -1,6 +1,14 @@
 <?php $view='templates/index'; ?>
 <h1>テンプレ一覧</h1>
 
+<div class="char-bubble" style="border-color: var(--warn);">
+  <img src="/assets/img/characters/konta/kitsune-yukkuri-normal.png" alt="こん太">
+  <div class="text">
+    <strong>こん太：</strong><br>
+    「よく使うメールの本文をここに保存しておくコン！『送信』ボタンですぐに作成画面へ行けるコン！」
+  </div>
+</div>
+
 <form method="get" action="/templates" class="row">
   <input name="q" value="<?=htmlspecialchars($q??'')?>" placeholder="検索（件名/タイトル）">
   <button class="btn" type="submit">検索</button>

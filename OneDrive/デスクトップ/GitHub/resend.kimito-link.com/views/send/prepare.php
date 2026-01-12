@@ -1,6 +1,14 @@
 <?php $view='send/prepare'; ?>
 <h1>送信</h1>
 
+<div class="guide-bubble right bubble-yellow">
+  <img src="/assets/img/characters/konta/kitsune-yukkuri-normal.png" alt="こん太">
+  <div class="text">
+    <span class="char-name" style="color: var(--warn);">こん太</span>
+    「宛先グループを選ぶと、To/CC/BCCが自動で入るコン！手入力で書き換えてもOKだコン！」
+  </div>
+</div>
+
 <form method="post" action="/send/confirm" class="form">
   <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrf_token()) ?>">
   <?php if ($t): ?>

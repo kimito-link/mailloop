@@ -278,18 +278,8 @@ route('GET', '/dbg', function() use ($config, $storage) {
 
 // Routes
 route('GET', '/', function() use ($storage) {
-  // ログイン状態を判定
   $u = $storage->getUser();
-  $loggedIn = !empty($u);
-
-  if (!$loggedIn) {
-    header('Location: /auth/login');
-    exit;
-  }
-
-  // ログイン済みなら /send へ（/send ルートは既に存在）
-  header('Location: /send');
-  exit;
+  render_view('home', ['user' => $u, 'page' => 'home']);
 });
 
 route('GET', '/auth/login', function() use ($config) {
@@ -1450,6 +1440,21 @@ route('GET','/logs/view', function() use ($storage){
   $log=$storage->getLog($u['id'],$id);
   if(!$log){ header('Location:/logs'); exit; }
   render_view('logs/view',['user'=>$u,'log'=>$log,'page'=>'logs']);
+});
+
+route('GET','/guide', function() use ($storage){
+  $u = $storage->getUser();
+  render_view('guide',['user'=>$u,'page'=>'guide']);
+});
+
+route('GET','/privacy', function() use ($storage){
+  $u = $storage->getUser();
+  render_view('privacy',['user'=>$u,'page'=>'privacy']);
+});
+
+route('GET','/terms', function() use ($storage){
+  $u = $storage->getUser();
+  render_view('terms',['user'=>$u,'page'=>'terms']);
 });
 
   dispatch($_SERVER['REQUEST_METHOD'], $_SERVER['REQUEST_URI'], []);
