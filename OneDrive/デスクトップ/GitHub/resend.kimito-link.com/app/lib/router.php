@@ -14,5 +14,5 @@ function dispatch(string $method, string $uri, array $ctx) {
     if ($p === $path) return $h($ctx);
   }
   http_response_code(404);
-  echo "404 Not Found";
+  echo "ページが見つかりません";
 }

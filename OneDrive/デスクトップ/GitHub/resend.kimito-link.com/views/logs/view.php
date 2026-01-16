@@ -14,7 +14,7 @@ $error = $log['error'] ?? (is_string($err) ? (json_decode($err, true) ?: null) :
 
 <div class="card">
   <div class="card-title">ステータス</div>
-  <div class="card-sub"><?=htmlspecialchars($log['status'] ?? '')?></div>
+  <div class="card-sub"><?=htmlspecialchars(($log['status'] ?? '') === 'success' ? '成功' : (($log['status'] ?? '') === 'failed' ? '失敗' : ($log['status'] ?? '')))?></div>
 </div>
 
 <?php

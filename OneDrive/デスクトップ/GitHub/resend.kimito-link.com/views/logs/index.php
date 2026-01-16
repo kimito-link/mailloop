@@ -21,7 +21,7 @@
       <a class="card" href="/logs/view?id=<?=urlencode((string)$l['id'])?>" style="text-decoration:none;color:inherit;">
         <div class="card-title"><?=htmlspecialchars($l['subject_snapshot'] ?? '')?></div>
         <div class="card-sub">
-          <?=htmlspecialchars($l['status'] ?? '')?> /
+          <?=htmlspecialchars(($l['status'] ?? '') === 'success' ? '成功' : (($l['status'] ?? '') === 'failed' ? '失敗' : ($l['status'] ?? '')))?> /
           To <?= (int)($counts['to'] ?? 0) ?> CC <?= (int)($counts['cc'] ?? 0) ?> BCC <?= (int)($counts['bcc'] ?? 0) ?>
         </div>
         <div class="muted"><?=htmlspecialchars(isset($l['created_at']) ? (is_numeric($l['created_at'])?date('Y-m-d H:i', (int)$l['created_at']):$l['created_at']) : '')?></div>

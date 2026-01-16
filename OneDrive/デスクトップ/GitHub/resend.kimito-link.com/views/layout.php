@@ -72,7 +72,7 @@
       if (!isset($page)) $page = '';
       $contentFile = __DIR__ . '/' . $view . '.php';
       if (file_exists($contentFile)) require $contentFile;
-      else echo "<p>View not found</p>";
+      else echo "<p>ビューが見つかりません (View not found)</p>";
     ?>
   </main>
 
